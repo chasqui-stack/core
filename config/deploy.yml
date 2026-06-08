@@ -1,0 +1,85 @@
+# Name of your application. Used to uniquely configure containers.
+service: saas-template-api
+
+# Name of the container image.
+image: your-username/saas-template-api
+
+# Deploy to these servers.
+servers:
+  web:
+    hosts:
+      - 34.134.60.186
+
+registry:
+  username: your-username
+  password:
+    - DOCKER_REGISTRY_PASSWORD
+
+# Inject ENV variables into containers (secrets come from .kamal/secrets).
+# Remember to run `kamal env push` after making changes!
+env:
+  clear:
+    PORT: 8090
+    DEBUG: "false"
+    POSTGRES_HOST: saas-template-api-db
+    POSTGRES_PORT: 5432
+    CORS_ORIGINS: "*"
+  secret:
+    # --- Database Credentials ---
+    - POSTGRES_USER
+    - POSTGRES_PASSWORD
+    - POSTGRES_DB
+    # --- JWT Authentication ---
+    - JWT_SECRET_KEY
+    # --- Invitation System ---
+    - FRONTEND_URL
+    # --- Email SMTP ---
+    - SMTP_HOST
+    - SMTP_PORT
+    - SMTP_USER
+    - SMTP_PASSWORD
+    - SMTP_FROM_EMAIL
+    - SMTP_FROM_NAME
+    - SMTP_TLS
+    - SMTP_SSL
+
+ssh:
+  user: deploy
+
+builder:
+  arch: amd64
+
+proxy:
+  ssl: true
+  host: "api.example.com"
+  app_port: 8090
+
+accessories:
+  db:
+    image: postgres:17
+    host: 34.134.60.186
+    # Uses 127.0.0.1:5434 to avoid access from public network
+    port: "127.0.0.1:5434:5432"
+    env:
+      clear:
+        POSTGRES_USER: postgres
+        POSTGRES_DB: saas_template
+        POSTGRES_HOST_AUTH_METHOD: trust
+      secret:
+        - POSTGRES_PASSWORD
+    files:
+      - config/init.sql:/docker-entrypoint-initdb.d/setup.sql
+    directories:
+      - data:/var/lib/postgresql/data
+
+aliases:
+  apps: server exec docker exec kamal-proxy kamal-proxy list
+  stats: server exec "docker stats --no-stream"
+  stats-live: server exec -i "docker stats"
+  ps: server exec "docker ps"
+  htop: server exec -i "htop"
+  server-terminal: server exec -i "bash"
+  app-terminal: app exec -i "bash"
+  db-terminal: server exec -i "docker exec -it saas-template-api-db psql -U postgres -d saas_template"
+  db-migrate: app exec "alembic upgrade head"
+  logs: app logs -f

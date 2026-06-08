@@ -1,0 +1,36 @@
+[project]
+name = "chasqui-core"
+version = "0.1.0"
+description = "Chasqui core — FastAPI + LangGraph backend for WhatsApp AI agents"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "alembic>=1.17.2",
+    "asyncpg>=0.31.0",
+    "bcrypt>=4.0.0,<4.1.0",
+    "email-validator>=2.3.0",
+    "fastapi>=0.128.0",
+    "greenlet>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "pydantic-settings>=2.12.0",
+    "python-dotenv>=1.2.1",
+    "python-jose[cryptography]>=3.5.0",
+    "python-multipart>=0.0.21",
+    "sqlmodel>=0.0.31",
+    "uvicorn[standard]>=0.40.0",
+    "gunicorn>=23.0.0",
+    "httpx>=0.27.0",
+    # AI / agent stack
+    "langchain>=0.3.0",
+    "langgraph>=0.3.0",
+    "langchain-google-genai>=2.0.0",
+    "pgvector>=0.3.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "httpx>=0.27.0",
+    "faker>=29.0.0",
+]
