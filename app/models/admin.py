@@ -1,7 +1,7 @@
 """Platform admin users - separate from tenant users for security."""
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlmodel import Field, SQLModel
 
@@ -43,5 +43,7 @@ class AdminUser(SQLModel, table=True):
     is_active: bool = Field(default=True)
 
     # Timestamps
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+    )
     last_login_at: datetime | None = Field(default=None)

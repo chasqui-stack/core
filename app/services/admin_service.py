@@ -1,7 +1,7 @@
 """Admin service — authentication and admin-user management."""
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -40,7 +40,7 @@ async def authenticate_admin(
     if not verify_password(password, admin.password_hash):
         return None
 
-    admin.last_login_at = datetime.utcnow()
+    admin.last_login_at = datetime.now(timezone.utc).replace(tzinfo=None)
     session.add(admin)
     await session.commit()
     await session.refresh(admin)

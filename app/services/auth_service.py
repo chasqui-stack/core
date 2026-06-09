@@ -1,6 +1,6 @@
 """JWT and password utilities (shared by admin auth)."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -24,7 +24,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def create_token(data: dict, expires_delta: timedelta, token_type: str) -> str:
     """Create a signed JWT (access/refresh, tenant-agnostic)."""
     to_encode = data.copy()
-    expire = datetime.utcnow() + expires_delta
+    expire = datetime.now(timezone.utc) + expires_delta
     to_encode.update({"exp": expire, "type": token_type})
     return jwt.encode(
         to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm
