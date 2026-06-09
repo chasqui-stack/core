@@ -23,6 +23,8 @@ make test
 ```
 Every schema change = a SQLModel model + an Alembic migration.
 
+DB-backed tests use an auto-created `<postgres_db>_test` database with transactional-rollback isolation (savepoints; nothing ever commits) — see `tests/conftest.py` and the README's Testing section. Don't add per-test TRUNCATE/cleanup logic.
+
 ## Planning
 
 PRPs and the sprint plan live in the **parent repo** (`../PRPs`, `../docs`). Write a PRP before non-trivial features.
