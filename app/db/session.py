@@ -1,5 +1,8 @@
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import sessionmaker
+
+# SQLModel's AsyncSession (adds .exec) — services type against this
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.config import settings
 

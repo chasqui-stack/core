@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.controllers import base
+from app.controllers import base, ingest
 from app.controllers.admin import auth_router
 from app.core.config import settings
 from app.core.middleware import setup_cors
@@ -29,7 +29,10 @@ setup_cors(app)
 # Public / health
 app.include_router(base.router)
 
+# Canonical entry point — the only seam gateways talk to (§5)
+app.include_router(ingest.router, tags=["ingest"])
+
 # Admin authentication (admins only — end users never authenticate)
 app.include_router(auth_router, prefix="/admin/auth", tags=["admin-auth"])
 
-# NOTE: /ingest (canonical entry point) and admin config routes land in later sprints.
+# NOTE: admin config routes (prompts, FAQ-RAG, tools) land in later sprints.

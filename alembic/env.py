@@ -9,7 +9,13 @@ from sqlmodel import SQLModel
 from alembic import context
 
 # CRITICAL: Import ALL models so SQLModel.metadata registers them
-from app.models import AdminUser  # noqa: F401
+from app.models import (  # noqa: F401
+    AdminUser,
+    Contact,
+    Conversation,
+    Memory,
+    Message,
+)
 
 from app.core.config import settings
 
