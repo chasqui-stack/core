@@ -1,8 +1,17 @@
-"""Test fixtures.
+"""Test fixtures — DB isolation via transactional rollback.
 
-DB-backed tests run against a dedicated `<postgres_db>_test` database,
-created on demand (extension + schema via SQLModel.metadata). Tables are
-truncated before each test so tests stay independent.
+Strategy (SQLAlchemy docs, "Joining a Session into an External Transaction"):
+
+1. A dedicated `<postgres_db>_test` database is created once per session
+   (config comes from the same env as the app; override POSTGRES_* env vars
+   in CI to point elsewhere). Dev/prod data is never touched.
+2. Each test runs inside an OUTER transaction on a single connection that is
+   ROLLED BACK at the end. App/test sessions join it with
+   `join_transaction_mode="create_savepoint"`, so the app's `commit()` only
+   releases a savepoint — nothing ever truly lands in the database.
+
+Result: tests can't contaminate each other (or the test DB) by design — no
+TRUNCATE between tests, no cleanup plugins needed.
 """
 
 import asyncio
@@ -27,8 +36,6 @@ TEST_DB_URL = (
     f"@{settings.postgres_host}:{settings.postgres_port}/{TEST_DB}"
 )
 
-DOMAIN_TABLES = ["messages", "memories", "conversations", "contacts", "admin_users"]
-
 
 async def _prepare_database() -> None:
     # 1) Create the test DB if missing (CREATE DATABASE needs autocommit)
@@ -41,12 +48,15 @@ async def _prepare_database() -> None:
             await conn.execute(text(f'CREATE DATABASE "{TEST_DB}"'))
     await admin_engine.dispose()
 
-    # 2) Extensions + schema
+    # 2) Extensions + schema, and a pristine baseline (in case an older
+    #    truncate-based run left rows behind)
     engine = create_async_engine(TEST_DB_URL, poolclass=NullPool)
     async with engine.begin() as conn:
         await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(SQLModel.metadata.create_all)
+        tables = ", ".join(t.name for t in SQLModel.metadata.sorted_tables)
+        await conn.execute(text(f"TRUNCATE {tables} CASCADE"))
     await engine.dispose()
 
 
@@ -57,31 +67,41 @@ def _test_db() -> None:
 
 
 @pytest.fixture
-async def engine():
-    """Per-test engine bound to the test's event loop."""
+async def connection():
+    """One connection + outer transaction per test; rolled back at the end."""
     engine = create_async_engine(TEST_DB_URL, poolclass=NullPool)
-    async with engine.begin() as conn:
-        await conn.execute(text(f"TRUNCATE {', '.join(DOMAIN_TABLES)} CASCADE"))
-    yield engine
+    async with engine.connect() as conn:
+        transaction = await conn.begin()
+        yield conn
+        await transaction.rollback()
     await engine.dispose()
 
 
+def _savepoint_session(connection) -> AsyncSession:
+    """Session that joins the test's outer transaction via savepoints."""
+    return AsyncSession(
+        bind=connection,
+        join_transaction_mode="create_savepoint",
+        expire_on_commit=False,
+    )
+
+
 @pytest.fixture
-async def session(engine):
-    """Plain session for asserting DB state from tests."""
-    async with AsyncSession(engine, expire_on_commit=False) as session:
+async def session(connection):
+    """Session for asserting DB state — sees the app's (savepoint) commits."""
+    async with _savepoint_session(connection) as session:
         yield session
 
 
 @pytest.fixture
-async def client(engine):
-    """HTTP client against the app, with get_session pointed at the test DB."""
+async def client(connection):
+    """HTTP client against the app, with get_session joined to the test txn."""
 
     async def override_get_session():
-        async with AsyncSession(engine, expire_on_commit=False) as session:
+        async with _savepoint_session(connection) as session:
             try:
                 yield session
-                await session.commit()
+                await session.commit()  # releases a savepoint, never a real commit
             except Exception:
                 await session.rollback()
                 raise
