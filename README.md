@@ -83,7 +83,10 @@ Beyond tools, a module can contribute **its own tables**
 the test conftest so they reach the metadata), **admin endpoints**
 (`register_admin_routes()` — mounted JWT-protected under
 `/admin/modules/<name>`) and **typed config knobs** (`config_schema()` →
-stored in `agent_config.tool_config`, surfaced as auto-forms in Sprint 5).
+stored in `agent_config.tool_config` under the module's `config_key`,
+auto-rendered as a settings form in the admin panel). Keep config schemas
+**flat** (str/int/float/bool fields only) — that's what the form renderer
+understands.
 
 Shipped examples: **`faq`** — the full-contract reference: Q&A knowledge
 base with pgvector RAG (embed-on-save, threshold retrieval, honest miss),
@@ -91,6 +94,23 @@ admin CRUD + re-embed at `/admin/modules/faq/*`; **`handoff`** (human
 handoff + lead capture); **`memory`** (silent fact saving with
 dedup-on-save, plus `update_memory`/`forget_memory` corrections).
 Full walkthrough: parent repo `docs/design/module-example-commercial-locations.md`.
+
+## Admin panel API
+
+JWT-protected endpoints backing the [admin panel](https://github.com/chasqui-stack/admin)
+(everything an operator changes takes effect on the agent's **next turn** — no redeploy):
+
+- `GET/PUT /admin/config` — the `agent_config` singleton: system prompt,
+  per-tool enable map (`enabled_tools`, missing key = enabled) and module
+  settings (`tool_config`). Writes are validated against the registry: unknown
+  tool names and schema-violating values are rejected with 422.
+- `GET /admin/tools` — the tool registry: every module with its tools, enable
+  state, `config_key` and JSON Schema (feeds the admin's auto-forms).
+- `GET /admin/contacts` (+`/{id}`, `/{id}/messages`, `/{id}/memories`) —
+  read-only conversation inspection. Embeddings and media payloads are never
+  serialized.
+- `GET /admin/modules/faq/search?q=` — retrieval preview with similarity
+  scores (module-contributed, like the rest of `/admin/modules/faq/*`).
 
 ## Testing
 

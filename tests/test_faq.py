@@ -245,6 +245,50 @@ async def test_admin_reembed_endpoint(client, session, fake_embeddings, admin_he
     assert len(fake_embeddings.document_calls) == 1
 
 
+async def test_admin_search_preview(client, session, fake_embeddings, admin_headers):
+    """Operators preview retrieval with scores — no floor by default, so
+    below-threshold entries show up (that's how you tune min_similarity)."""
+    await make_entries(session)
+
+    response = await client.get(
+        "/admin/modules/faq/search",
+        params={"q": "opening hours"},
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    hits = response.json()
+    assert len(hits) == 2  # both entries, even the barely-similar one
+    assert hits[0]["entry"]["question"] == "What are your opening hours?"
+    assert hits[0]["similarity"] > hits[1]["similarity"]
+    assert "embedding" not in hits[0]["entry"]
+
+    floored = await client.get(
+        "/admin/modules/faq/search",
+        params={"q": "opening hours", "min_similarity": 0.5},
+        headers=admin_headers,
+    )
+    assert len(floored.json()) == 1
+
+
+async def test_admin_search_preview_degrades_on_outage(
+    client, monkeypatch, admin_headers
+):
+    import app.core.embeddings as embeddings_mod
+
+    def boom():
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr(embeddings_mod, "get_embeddings", boom)
+
+    response = await client.get(
+        "/admin/modules/faq/search", params={"q": "anything"}, headers=admin_headers
+    )
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
 async def test_module_contract_is_fully_exercised(session):
     """The faq module is the proof-of-fire of the whole module contract."""
     from app.modules.faq import module

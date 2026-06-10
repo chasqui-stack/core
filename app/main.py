@@ -4,7 +4,12 @@ from contextlib import asynccontextmanager
 from fastapi import APIRouter, Depends, FastAPI
 
 from app.controllers import base, ingest
-from app.controllers.admin import auth_router
+from app.controllers.admin import (
+    auth_router,
+    config_router,
+    contacts_router,
+    tools_router,
+)
 from app.core.config import settings
 from app.core.dependencies import get_current_admin
 from app.core.middleware import setup_cors
@@ -54,6 +59,16 @@ app.include_router(ingest.router, tags=["ingest"])
 # Admin authentication (admins only — end users never authenticate)
 app.include_router(auth_router, prefix="/admin/auth", tags=["admin-auth"])
 
+# Admin panel API (Sprint 5) — agent config, tool registry, conversation
+# inspection. JWT-protected as a whole.
+admin_router = APIRouter(prefix="/admin", dependencies=[Depends(get_current_admin)])
+admin_router.include_router(config_router, prefix="/config", tags=["admin-config"])
+admin_router.include_router(tools_router, prefix="/tools", tags=["admin-tools"])
+admin_router.include_router(
+    contacts_router, prefix="/contacts", tags=["admin-contacts"]
+)
+app.include_router(admin_router)
+
 # Module admin routes — every module's register_admin_routes() mounts under
 # /admin/modules/<name>, JWT-protected as a whole (§8)
 modules_router = APIRouter(
@@ -61,5 +76,3 @@ modules_router = APIRouter(
 )
 registry.mount_admin_routes(modules_router)
 app.include_router(modules_router)
-
-# NOTE: agent config routes (prompts, tool toggles) land in Sprint 5.

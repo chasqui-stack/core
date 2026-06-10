@@ -44,6 +44,11 @@ class ReembedResponse(BaseModel):
     reembedded: int
 
 
+class SearchHit(BaseModel):
+    entry: "FaqEntryResponse"
+    similarity: float
+
+
 def _to_response(entry: FaqEntry) -> FaqEntryResponse:
     return FaqEntryResponse(
         id=entry.id,
@@ -67,6 +72,27 @@ async def _get_or_404(session: AsyncSession, entry_id: uuid.UUID) -> FaqEntry:
 
 def register(router: APIRouter) -> None:
     """Module hook target — declares the CRUD on the module's sub-router."""
+
+    @router.get("/search", response_model=list[SearchHit])
+    async def search_preview(
+        q: str,
+        top_k: int = 8,
+        min_similarity: float = 0.0,
+        session: AsyncSession = Depends(get_session),
+    ):
+        """Retrieval preview for operators — what would the agent see?
+
+        Defaults to NO similarity floor so the panel can show scores below
+        the tool's threshold (that's exactly what makes it useful for
+        tuning min_similarity). Embeddings outage degrades to [].
+        """
+        hits = await service.search(
+            session, q, top_k=top_k, min_similarity=min_similarity
+        )
+        return [
+            SearchHit(entry=_to_response(entry), similarity=round(similarity, 4))
+            for entry, similarity in hits
+        ]
 
     @router.get("/entries", response_model=list[FaqEntryResponse])
     async def list_entries(session: AsyncSession = Depends(get_session)):

@@ -85,6 +85,7 @@ class FaqModule:
     """FAQ knowledge-base: Q&A entries + grounded retrieval."""
 
     name = "faq"
+    config_key = "faq_search"  # where the knobs live in agent_config.tool_config
 
     def register_tools(self):
         return [faq_search]

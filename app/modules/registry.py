@@ -35,7 +35,10 @@ class ToolModule(Protocol):
     # Optional hooks (implement as needed):
     # def register_models(self) -> list[type]: ...          # SQLModel tables + Alembic
     # def register_admin_routes(self, router) -> None: ...  # admin CRUD/config UI backing
-    # def config_schema(self) -> type | None: ...           # per-project settings (Sprint 5 auto-forms)
+    # def config_schema(self) -> type | None: ...           # per-project settings (admin auto-forms)
+    # config_key: str = <name>   # key inside agent_config.tool_config (faq uses "faq_search").
+    #                            # Keep config_schema() FLAT (str/int/float/bool fields only) —
+    #                            # that's what the admin SchemaForm renders.
 
 
 _MODULES: list[ToolModule] = []
