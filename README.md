@@ -122,8 +122,9 @@ storage configured, the core uploads each one to an **S3-compatible bucket**
 in `messages.media_url` — and serves it back to the admin via presigned URLs.
 Four `.env` vars (`STORAGE_ENDPOINT_URL`, `STORAGE_BUCKET`,
 `STORAGE_ACCESS_KEY`, `STORAGE_SECRET_KEY`) cover AWS S3, Cloudflare R2,
-Spaces, B2 and local MinIO (the parent's `docker-compose` ships one with the
-bucket pre-created). Unset = media is processed in-turn but not persisted —
+Spaces, B2 and the local dev bucket (the parent's `docker-compose` ships
+RustFS with the bucket pre-created — dev/test only; production points at a
+managed bucket). Unset = media is processed in-turn but not persisted —
 degraded, not broken; upload failures never break the turn. The LLM context
 stays text-only either way. See `app/core/storage.py` and
 [`adr-003`](https://github.com/chasqui-stack/chasqui/blob/main/docs/design/adr-003-media-storage.md).

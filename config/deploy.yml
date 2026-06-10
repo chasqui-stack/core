@@ -40,6 +40,14 @@ env:
     - INTERNAL_API_KEY
     # --- LLM / embeddings ---
     - GOOGLE_API_KEY
+    # --- Media storage (ADR-003, OPTIONAL — any managed S3-compatible
+    # bucket: S3, R2, Spaces, B2; never a self-hosted accessory here).
+    # Uncomment + add to .kamal/secrets to enable:
+    # - STORAGE_ENDPOINT_URL
+    # - STORAGE_BUCKET
+    # - STORAGE_ACCESS_KEY
+    # - STORAGE_SECRET_KEY
+    # - STORAGE_REGION
 
 ssh:
   user: deploy
