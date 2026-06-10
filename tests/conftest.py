@@ -37,6 +37,13 @@ TEST_DB_URL = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_internal_key(monkeypatch):
+    """Tests must not depend on the developer's .env — /ingest is open by
+    default; the auth suite (test_ingest_auth.py) sets its own key on top."""
+    monkeypatch.setattr(settings, "internal_api_key", None)
+
+
 async def _prepare_database() -> None:
     # 1) Create the test DB if missing (CREATE DATABASE needs autocommit)
     admin_engine = create_async_engine(settings.database_url, isolation_level="AUTOCOMMIT")

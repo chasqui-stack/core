@@ -38,6 +38,12 @@ Per-model vision/audio support is auto-detected (`app/core/llm_capabilities.py`)
 unknown models degrade to text-only with a warning (override with
 `LLM_SUPPORTS_VISION` / `LLM_SUPPORTS_AUDIO`).
 
+**Embeddings are swappable too** (`app/core/embeddings.py`, via
+`init_embeddings()`): `EMBEDDING_PROVIDER` google/openai/ollama — all pinned
+to **768 dims** (the `Vector(768)` schema contract; switching providers
+requires re-embedding). Rationale: parent repo
+`docs/design/adr-001-embeddings-provider-dims.md`.
+
 ## Tool modules (the extension point)
 
 Drop a self-contained package under `app/modules/` exposing a module-level

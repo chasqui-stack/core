@@ -1,14 +1,15 @@
-# Name of your application. Used to uniquely configure containers.
-service: saas-template-api
+# Kamal 2 deploy config — Chasqui core.
+# Placeholders to replace per project: registry username, server IP, host.
+service: chasqui-core
 
 # Name of the container image.
-image: your-username/saas-template-api
+image: your-username/chasqui-core
 
 # Deploy to these servers.
 servers:
   web:
     hosts:
-      - 34.134.60.186
+      - 203.0.113.10 # your server IP
 
 registry:
   username: your-username
@@ -21,27 +22,24 @@ env:
   clear:
     PORT: 8090
     DEBUG: "false"
-    POSTGRES_HOST: saas-template-api-db
+    POSTGRES_HOST: chasqui-core-db
     POSTGRES_PORT: 5432
     CORS_ORIGINS: "*"
+    LLM_PROVIDER: google
+    LLM_MODEL: gemini-2.5-flash
+    EMBEDDING_PROVIDER: google
+    EMBEDDING_MODEL: gemini-embedding-001
   secret:
-    # --- Database Credentials ---
+    # --- Database credentials ---
     - POSTGRES_USER
     - POSTGRES_PASSWORD
     - POSTGRES_DB
-    # --- JWT Authentication ---
+    # --- Admin JWT ---
     - JWT_SECRET_KEY
-    # --- Invitation System ---
-    - FRONTEND_URL
-    # --- Email SMTP ---
-    - SMTP_HOST
-    - SMTP_PORT
-    - SMTP_USER
-    - SMTP_PASSWORD
-    - SMTP_FROM_EMAIL
-    - SMTP_FROM_NAME
-    - SMTP_TLS
-    - SMTP_SSL
+    # --- Gateway -> core shared secret (/ingest) ---
+    - INTERNAL_API_KEY
+    # --- LLM / embeddings ---
+    - GOOGLE_API_KEY
 
 ssh:
   user: deploy
@@ -56,14 +54,16 @@ proxy:
 
 accessories:
   db:
-    image: postgres:17
-    host: 34.134.60.186
+    # pgvector/pgvector (NOT plain postgres): init.sql runs CREATE EXTENSION
+    # vector — the official postgres image doesn't ship the extension.
+    image: pgvector/pgvector:pg17
+    host: 203.0.113.10 # your server IP
     # Uses 127.0.0.1:5434 to avoid access from public network
     port: "127.0.0.1:5434:5432"
     env:
       clear:
         POSTGRES_USER: postgres
-        POSTGRES_DB: saas_template
+        POSTGRES_DB: chasqui
         POSTGRES_HOST_AUTH_METHOD: trust
       secret:
         - POSTGRES_PASSWORD
@@ -80,6 +80,6 @@ aliases:
   htop: server exec -i "htop"
   server-terminal: server exec -i "bash"
   app-terminal: app exec -i "bash"
-  db-terminal: server exec -i "docker exec -it saas-template-api-db psql -U postgres -d saas_template"
+  db-terminal: server exec -i "docker exec -it chasqui-core-db psql -U postgres -d chasqui"
   db-migrate: app exec "alembic upgrade head"
   logs: app logs -f

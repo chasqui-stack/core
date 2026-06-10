@@ -50,8 +50,10 @@ class Settings(BaseSettings):
     llm_supports_vision: bool | None = None
     llm_supports_audio: bool | None = None
 
-    # Embeddings (RAG over pgvector) — 768-dim requested via
-    # output_dimensionality (see app/core/embeddings.py)
+    # Embeddings (RAG over pgvector) — provider-swappable via
+    # init_embeddings(), like the LLM. 768 dims is the project constant
+    # (must match Vector(768) in migration 002) — see app/core/embeddings.py.
+    embedding_provider: str = "google"  # "google" | "openai" | "ollama" | ...
     embedding_model: str = "gemini-embedding-001"
 
     @property
