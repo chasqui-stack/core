@@ -19,7 +19,12 @@ down_revision: Union[str, Sequence[str], None] = "001_initial"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-EMBEDDING_DIM = 768  # Gemini text-embedding-004
+# Provision-time: the vector width comes from .env (EMBEDDING_DIM) at the
+# moment this migration first runs. Changing it later requires a column
+# migration + re-embedding. See ADR-001 (parent repo, docs/design/).
+from app.core.config import settings
+
+EMBEDDING_DIM = settings.embedding_dim
 
 
 def upgrade() -> None:

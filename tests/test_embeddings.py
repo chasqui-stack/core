@@ -4,7 +4,7 @@ import pytest
 
 import app.core.embeddings as embeddings_mod
 from app.core.config import settings
-from app.core.embeddings import EMBEDDING_DIM, get_embeddings
+from app.core.embeddings import get_embeddings
 
 
 @pytest.fixture(autouse=True)
@@ -22,7 +22,7 @@ def fresh_factory(monkeypatch):
     get_embeddings.cache_clear()
 
 
-def test_google_maps_to_google_genai_and_requests_768(fresh_factory, monkeypatch):
+def test_google_maps_to_google_genai_and_requests_configured_dim(fresh_factory, monkeypatch):
     monkeypatch.setattr(settings, "embedding_provider", "google")
     monkeypatch.setattr(settings, "embedding_model", "gemini-embedding-001")
 
@@ -30,10 +30,10 @@ def test_google_maps_to_google_genai_and_requests_768(fresh_factory, monkeypatch
 
     model, kwargs = fresh_factory[0]
     assert model == "google_genai:gemini-embedding-001"
-    assert kwargs["output_dimensionality"] == EMBEDDING_DIM
+    assert kwargs["output_dimensionality"] == settings.embedding_dim
 
 
-def test_openai_requests_dimensions_768(fresh_factory, monkeypatch):
+def test_openai_requests_configured_dimensions(fresh_factory, monkeypatch):
     monkeypatch.setattr(settings, "embedding_provider", "openai")
     monkeypatch.setattr(settings, "embedding_model", "text-embedding-3-small")
     monkeypatch.setattr(settings, "openai_api_key", "sk-test")
@@ -42,8 +42,20 @@ def test_openai_requests_dimensions_768(fresh_factory, monkeypatch):
 
     model, kwargs = fresh_factory[0]
     assert model == "openai:text-embedding-3-small"
-    assert kwargs["dimensions"] == EMBEDDING_DIM
+    assert kwargs["dimensions"] == settings.embedding_dim
     assert kwargs["api_key"] == "sk-test"
+
+
+def test_embedding_dim_is_env_driven(fresh_factory, monkeypatch):
+    """A dev choosing gemini at full 3072 dims only edits .env (provision-time)."""
+    monkeypatch.setattr(settings, "embedding_provider", "google")
+    monkeypatch.setattr(settings, "embedding_model", "gemini-embedding-001")
+    monkeypatch.setattr(settings, "embedding_dim", 3072)
+
+    get_embeddings()
+
+    _, kwargs = fresh_factory[0]
+    assert kwargs["output_dimensionality"] == 3072
 
 
 def test_ollama_passes_through_without_dim_kwarg(fresh_factory, monkeypatch):

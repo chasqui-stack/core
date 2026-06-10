@@ -6,16 +6,18 @@ Built on LangChain's `init_embeddings()` (the `init_chat_model()` twin):
     EMBEDDING_PROVIDER=openai  EMBEDDING_MODEL=text-embedding-3-small
     EMBEDDING_PROVIDER=ollama  EMBEDDING_MODEL=nomic-embed-text       # 768 native
 
-**EMBEDDING_DIM = 768 is the project constant** — it must match `Vector(768)`
-in app/models/memory.py (migration 002). Matryoshka providers (Google,
-OpenAI) are asked for 768 explicitly; fixed-dim models must be 768 native.
-Switching providers requires re-embedding existing rows: vectors from
-different models live in different spaces and are not comparable.
+**EMBEDDING_DIM (.env, default 768) is provision-time config** — the vector
+column width is created from it on the first `alembic upgrade`, so changing
+it afterwards requires a column migration + re-embedding every row.
+Matryoshka providers (Google, OpenAI) are asked for it explicitly;
+fixed-dim models (e.g. nomic-embed-text = 768) must match it natively.
+Switching providers also requires re-embedding: vectors from different
+models live in different spaces and are not comparable.
 
-Why 768 and not 3072 (gemini-embedding-001's default): MRL keeps ~all the
-quality at 768, storage is 4x cheaper, and pgvector indexes `vector` columns
-only up to 2,000 dims (3072 would force `halfvec`, see the embeddings ADR in
-the parent repo's docs/design/).
+Why 768 as default (vs gemini-embedding-001's native 3072): MRL keeps ~all
+the quality, storage is 4x cheaper, and pgvector HNSW-indexes `vector`
+columns only up to 2,000 dims — 3072 needs a `halfvec` index (auto-selected
+in Sprint 4). Full rationale: parent repo docs/design/adr-001.
 """
 
 from functools import lru_cache
@@ -25,13 +27,11 @@ from langchain_core.embeddings import Embeddings
 
 from app.core.config import settings
 
-EMBEDDING_DIM = 768
-
 # settings.embedding_provider → init_embeddings' provider string
 _PROVIDER_MAP = {"google": "google_genai"}
 
 # Matryoshka providers accept a requested output dimension; anything not
-# listed here must produce EMBEDDING_DIM natively (e.g. nomic-embed-text).
+# listed here must produce settings.embedding_dim natively.
 _DIM_KWARG = {"google_genai": "output_dimensionality", "openai": "dimensions"}
 
 
@@ -42,7 +42,7 @@ def get_embeddings() -> Embeddings:
 
     kwargs: dict = {}
     if dim_kwarg := _DIM_KWARG.get(provider):
-        kwargs[dim_kwarg] = EMBEDDING_DIM
+        kwargs[dim_kwarg] = settings.embedding_dim
 
     if provider == "google_genai" and settings.google_api_key:
         kwargs["google_api_key"] = settings.google_api_key

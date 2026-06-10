@@ -1,6 +1,7 @@
 """Memories — long-term facts/summaries about a contact, pgvector-backed (§6).
 
-Sprint 1 ships the table; extraction + retrieval wiring lands in Sprint 3/4.
+The vector width comes from EMBEDDING_DIM (.env, provision-time): it is
+baked into the schema on first migrate. See ADR-001 in the parent repo.
 """
 
 import uuid
@@ -11,8 +12,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import Column
 from sqlmodel import Field, SQLModel
 
-# Gemini text-embedding-004 dimension; revisit when the embedder is wired (Sprint 3/4)
-EMBEDDING_DIM = 768
+from app.core.config import settings
 
 
 def _utcnow_naive() -> datetime:
@@ -33,7 +33,7 @@ class Memory(SQLModel, table=True):
     # Nullable until the embedder runs (extraction is async to the turn)
     embedding: Any = Field(
         default=None,
-        sa_column=Column("embedding", Vector(EMBEDDING_DIM), nullable=True),
+        sa_column=Column("embedding", Vector(settings.embedding_dim), nullable=True),
     )
 
     created_at: datetime = Field(default_factory=_utcnow_naive, nullable=False)

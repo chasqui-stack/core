@@ -51,10 +51,15 @@ class Settings(BaseSettings):
     llm_supports_audio: bool | None = None
 
     # Embeddings (RAG over pgvector) — provider-swappable via
-    # init_embeddings(), like the LLM. 768 dims is the project constant
-    # (must match Vector(768) in migration 002) — see app/core/embeddings.py.
+    # init_embeddings(), like the LLM (see app/core/embeddings.py).
     embedding_provider: str = "google"  # "google" | "openai" | "ollama" | ...
     embedding_model: str = "gemini-embedding-001"
+
+    # PROVISION-TIME setting: the vector column width is created from this on
+    # the first `alembic upgrade`. Changing it afterwards requires a column
+    # migration + re-embedding every row. Index strategy (Sprint 4) adapts:
+    # <=2000 HNSW on vector · 2001-4000 HNSW on halfvec · >4000 exact scan.
+    embedding_dim: int = 768
 
     @property
     def database_url(self) -> str:
