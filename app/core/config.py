@@ -29,21 +29,30 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 7
 
     # LLM — provider/model are swappable via LangChain's init_chat_model()
-    # (Sprint 3 factory). Examples: google + gemini-2.5-flash (stable,
+    # (see app/core/llm.py). Examples: google + gemini-2.5-flash (stable,
     # multimodal), google + gemini-3-flash-preview, anthropic + claude-*,
-    # ollama + llama3.3, openai-compatible base_url for OpenRouter.
-    llm_provider: str = "google"  # "google" | "anthropic" | "openai" | "ollama" | ...
+    # ollama + llama3.3, openrouter + <vendor/model>.
+    llm_provider: str = "google"  # "google" | "anthropic" | "openai" | "openrouter" | "ollama"
     llm_model: str = "gemini-2.5-flash"
+    llm_temperature: float = 0.7
     google_api_key: str | None = None
     anthropic_api_key: str | None = None
+    openai_api_key: str | None = None
+    openai_base_url: str | None = None  # any OpenAI-compatible server
+    openrouter_api_key: str | None = None
+    ollama_base_url: str | None = None  # default http://localhost:11434
+
+    # Conversation history window fed to the agent each turn
+    history_limit: int = 20
 
     # Modality overrides for models the capability registry doesn't know
     # (see app/core/llm_capabilities.py). None = auto-detect by model name.
     llm_supports_vision: bool | None = None
     llm_supports_audio: bool | None = None
 
-    # Embeddings (RAG over pgvector)
-    embedding_model: str = "text-embedding-004"
+    # Embeddings (RAG over pgvector) — 768-dim requested via
+    # output_dimensionality (see app/core/embeddings.py)
+    embedding_model: str = "gemini-embedding-001"
 
     @property
     def database_url(self) -> str:

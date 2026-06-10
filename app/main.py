@@ -7,11 +7,13 @@ from app.controllers.admin import auth_router
 from app.core.config import settings
 from app.core.middleware import setup_cors
 from app.db.session import close_db, init_db
+from app.modules import registry
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    registry.discover()  # tool modules under app/modules/ (ARCHITECTURE §8)
     yield
     await close_db()
 

@@ -1,12 +1,30 @@
-"""Sprint 1 acceptance: canonical /ingest pipeline (DB-backed)."""
+"""Sprint 1 acceptance: canonical /ingest pipeline (DB-backed).
+
+These tests exercise persistence/upsert mechanics, so the agent turn is
+stubbed (the real orchestrator is covered in test_orchestrator.py).
+"""
 
 import uuid
 
+import pytest
 from sqlmodel import select
 
 from app.models import Contact, Conversation, Message
+from app.schemas.ingest import OutboundMessage
+from app.services import orchestrator
 
 BSUID = "bsuid-3EB0C431D26A1916E55F"
+
+
+@pytest.fixture(autouse=True)
+def stub_agent_turn(monkeypatch):
+    """Replace the LangGraph turn with a canned echo (no LLM in these tests)."""
+
+    async def fake_run_turn(session, conversation, inbound, **kwargs):
+        text = f"Echo: {inbound.text}" if inbound.text else f"Recibí tu {inbound.type}."
+        return [OutboundMessage(type="text", text=text)]
+
+    monkeypatch.setattr(orchestrator, "run_turn", fake_run_turn)
 
 
 def canonical_payload(**overrides) -> dict:

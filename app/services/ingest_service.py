@@ -1,7 +1,12 @@
 """Canonical ingest pipeline (ARCHITECTURE §5, §6).
 
-upsert contact → get-or-create the single conversation → persist inbound →
-orchestrator turn (stub in Sprint 1) → persist outbound → canonical response.
+upsert contact → get-or-create the single conversation → agent turn →
+persist inbound + outbound → canonical response.
+
+The turn runs BEFORE the inbound row is persisted on purpose: the
+orchestrator's history query must see only *prior* messages (the current
+one travels as the turn's input). Everything shares one transaction, so
+failure semantics are unchanged.
 """
 
 import uuid
@@ -91,20 +96,26 @@ async def handle_ingest(session: AsyncSession, request: IngestRequest) -> Ingest
     contact = await upsert_contact(session, request.channel, request.contact)
     conversation = await get_or_create_conversation(session, contact.id)
 
-    # Persist inbound message (timestamped by the gateway when provided)
+    # Agent turn (LangGraph — history query must not see the current message yet)
+    replies = await orchestrator.run_turn(session, conversation, request.message)
+
+    # Persist inbound message (timestamped by the gateway when provided).
+    # Inline media (base64 data URIs) is for the current turn only — history
+    # is text-only, and the media_id in `raw` allows re-download if needed.
+    media_url = request.message.media_url
+    if media_url and media_url.startswith("data:"):
+        media_url = None
+
     inbound = Message(
         conversation_id=conversation.id,
         direction="in",
         type=request.message.type,
         text=request.message.text,
-        media_url=request.message.media_url,
+        media_url=media_url,
         meta=request.message.raw,
         created_at=_to_naive_utc(request.received_at),
     )
     session.add(inbound)
-
-    # Agent turn (stub in Sprint 1 → real LangGraph in Sprint 3)
-    replies = await orchestrator.run_turn(conversation, request.message)
 
     # Persist outbound message(s)
     for reply in replies:

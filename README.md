@@ -17,6 +17,58 @@ make migrate
 make dev                 # http://localhost:8090  (/docs)
 ```
 
+## The agent
+
+`POST /ingest` runs a real LangGraph turn (LangChain v1 `create_agent`):
+DB-editable system prompt (`agent_config`, Sprint 5 admin UI) + conversation
+history + long-term memories (pgvector) + the current message — multimodal
+(image/audio content blocks) when the configured model supports it.
+
+**Swappable LLM** — a `.env` change, never code (`app/core/llm.py`):
+
+```bash
+LLM_PROVIDER=google     LLM_MODEL=gemini-2.5-flash      # default (multimodal)
+LLM_PROVIDER=anthropic  LLM_MODEL=claude-sonnet-4-6
+LLM_PROVIDER=openai     LLM_MODEL=gpt-5-mini
+LLM_PROVIDER=openrouter LLM_MODEL=vendor/model
+LLM_PROVIDER=ollama     LLM_MODEL=llama3.3              # local, no key
+```
+
+Per-model vision/audio support is auto-detected (`app/core/llm_capabilities.py`);
+unknown models degrade to text-only with a warning (override with
+`LLM_SUPPORTS_VISION` / `LLM_SUPPORTS_AUDIO`).
+
+## Tool modules (the extension point)
+
+Drop a self-contained package under `app/modules/` exposing a module-level
+`module` attribute — it is discovered at startup and its tools reach the
+agent **without touching core code**:
+
+```python
+# app/modules/my_feature/__init__.py
+from langchain.tools import tool
+
+@tool
+def my_tool(query: str) -> str:
+    """Cuándo y cómo debe usarla el modelo (el docstring es el manual)."""
+    return "..."
+
+class MyModule:
+    name = "my_feature"
+    def register_tools(self):
+        return [my_tool]
+
+module = MyModule()
+```
+
+Tools access the DB session / contact / conversation / config through
+`runtime: ToolRuntime[TurnContext]` (`app/services/agent_context.py`).
+Disable any tool at runtime via `agent_config.enabled_tools`
+(`{"my_tool": false}`); tool exceptions become error `ToolMessage`s — the
+graph never crashes. Shipped examples: `faq` (stub until Sprint 4 RAG),
+`handoff` (human handoff + lead capture), `memory` (silent fact saving).
+Full reference module: parent repo `docs/design/module-example-commercial-locations.md`.
+
 ## Testing
 
 ```bash

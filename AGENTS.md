@@ -13,7 +13,9 @@ The **heart** of Chasqui: all business logic, the agent orchestrator, memory, RA
 - **Admin-only auth (§4):** JWT for admins. **No organizations, no member roles, no self-serve signup.** End users (contacts) never authenticate.
 - **BSUID-first identity (§10):** `contacts.external_id` = WhatsApp BSUID; `wa_id` is optional/secondary.
 - **Single conversation per contact** + `messages` history + long-term `memories` (pgvector).
-- **Tool Registry (§8):** tools are LangChain `@tool`/`StructuredTool` with Pydantic `args_schema`, injected via `ToolNode`/`bind_tools`, accessed through `ToolRuntime`. Add capabilities as self-contained **modules** under `app/modules/` — never by editing the core.
+- **Tool Registry (§8):** tools are LangChain `@tool`/`StructuredTool` with Pydantic `args_schema`, injected via `ToolNode`/`bind_tools`, accessed through `ToolRuntime[TurnContext]`. Add capabilities as self-contained **modules** under `app/modules/` (a package exposing a module-level `module` attribute — auto-discovered at startup) — never by editing the core. Runtime enable/disable per tool lives in `agent_config.enabled_tools`; tool exceptions become error `ToolMessage`s (`app/services/agent_middleware.py`).
+- **The agent turn (`app/services/orchestrator.py`):** LangChain v1 `create_agent` — DB-editable system prompt (`agent_config` singleton) + history + pgvector memories + current message (multimodal content blocks gated by `app/core/llm_capabilities.py`). The LLM is swappable via `.env` only (`app/core/llm.py` / `init_chat_model`): google · anthropic · openai · openrouter · ollama.
+- **Media:** the gateway inlines media as base64 `data:` URIs in canonical `media_url` (Meta URLs expire). Current turn only — never persisted (history is text-only; `media_id` stays in message `metadata`).
 
 ## Dev
 

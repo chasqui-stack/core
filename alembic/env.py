@@ -11,6 +11,7 @@ from alembic import context
 # CRITICAL: Import ALL models so SQLModel.metadata registers them
 from app.models import (  # noqa: F401
     AdminUser,
+    AgentConfig,
     Contact,
     Conversation,
     Memory,
