@@ -35,7 +35,7 @@ class ToolModule(Protocol):
     # Optional hooks (implement as needed):
     # def register_models(self) -> list[type]: ...          # SQLModel tables + Alembic
     # def register_admin_routes(self, router) -> None: ...  # admin CRUD/config UI backing
-    # def config_schema(self) -> type | None: ...           # per-project settings
+    # def config_schema(self) -> type | None: ...           # per-project settings (Sprint 5 auto-forms)
 
 
 _MODULES: list[ToolModule] = []
@@ -57,6 +57,41 @@ def get_tools() -> list[Any]:
     for module in _MODULES:
         tools.extend(module.register_tools())
     return tools
+
+
+def get_models() -> list[type]:
+    """Flattened list of every module's SQLModel tables.
+
+    Importing the module package is what actually lands the tables in
+    `SQLModel.metadata` (so call `discover()` before using the metadata —
+    conftest and alembic/env.py do); this hook makes the contract explicit
+    and feeds future tooling (`chasqui generate module`).
+    """
+    models: list[type] = []
+    for module in _MODULES:
+        register = getattr(module, "register_models", None)
+        if register is not None:
+            models.extend(register())
+    return models
+
+
+def mount_admin_routes(router: Any) -> None:
+    """Give every module a chance to mount its admin endpoints.
+
+    Each module gets its own sub-router under `/admin/modules/<module.name>`
+    (auth is enforced by the parent router in app/main.py). A module opts in
+    by implementing `register_admin_routes(router)`.
+    """
+    from fastapi import APIRouter
+
+    for module in _MODULES:
+        register = getattr(module, "register_admin_routes", None)
+        if register is None:
+            continue
+        sub_router = APIRouter(prefix=f"/{module.name}", tags=[f"admin-{module.name}"])
+        register(sub_router)
+        router.include_router(sub_router)
+        logger.info("Admin routes mounted for module '%s'", module.name)
 
 
 def discover() -> list[ToolModule]:

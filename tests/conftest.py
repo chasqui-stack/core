@@ -24,9 +24,13 @@ from sqlalchemy.pool import NullPool
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-# Import models so SQLModel.metadata knows every table
+# Import models so SQLModel.metadata knows every table — core models AND
+# module-contributed tables (registry.discover() imports each module package)
 import app.models  # noqa: F401
 from app.core.config import settings
+from app.modules import registry
+
+registry.discover()
 from app.db.session import get_session
 from app.main import app
 

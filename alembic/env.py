@@ -18,6 +18,12 @@ from app.models import (  # noqa: F401
     Message,
 )
 
+# Module-contributed tables (e.g. faq_entries) — discover() imports each
+# package under app/modules/, landing their models in SQLModel.metadata
+from app.modules import registry
+
+registry.discover()
+
 from app.core.config import settings
 
 config = context.config

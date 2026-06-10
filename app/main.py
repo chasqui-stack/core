@@ -1,19 +1,36 @@
+import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import APIRouter, Depends, FastAPI
 
 from app.controllers import base, ingest
 from app.controllers.admin import auth_router
 from app.core.config import settings
+from app.core.dependencies import get_current_admin
 from app.core.middleware import setup_cors
 from app.db.session import close_db, init_db
 from app.modules import registry
+
+# Discover tool modules at import time (idempotent) so module admin routes
+# exist before the app starts serving (ARCHITECTURE §8).
+registry.discover()
+
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
-    registry.discover()  # tool modules under app/modules/ (ARCHITECTURE §8)
+    registry.discover()  # idempotent — covers reload/edge import orders
+    from app.core.vector_search import index_strategy
+
+    if index_strategy() == "exact":  # > 4000 dims: no ANN index possible (ADR-001)
+        logger.warning(
+            "EMBEDDING_DIM=%s exceeds halfvec's 4000-dim HNSW limit: pgvector "
+            "searches run as exact scans (fine small, slow at scale).",
+            settings.embedding_dim,
+        )
     yield
     await close_db()
 
@@ -37,4 +54,12 @@ app.include_router(ingest.router, tags=["ingest"])
 # Admin authentication (admins only — end users never authenticate)
 app.include_router(auth_router, prefix="/admin/auth", tags=["admin-auth"])
 
-# NOTE: admin config routes (prompts, FAQ-RAG, tools) land in later sprints.
+# Module admin routes — every module's register_admin_routes() mounts under
+# /admin/modules/<name>, JWT-protected as a whole (§8)
+modules_router = APIRouter(
+    prefix="/admin/modules", dependencies=[Depends(get_current_admin)]
+)
+registry.mount_admin_routes(modules_router)
+app.include_router(modules_router)
+
+# NOTE: agent config routes (prompts, tool toggles) land in Sprint 5.

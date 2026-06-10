@@ -35,10 +35,9 @@ from app.services.agent_middleware import ToolErrorMiddleware, ToolFilterMiddlew
 
 logger = logging.getLogger(__name__)
 
-FALLBACK_REPLY = (
-    "Lo siento, tuve un problema procesando tu mensaje. "
-    "¿Puedes intentarlo de nuevo en un momento?"
-)
+# End-user-facing (sent verbatim on errors) → operator-configurable via .env
+# (FALLBACK_REPLY). Everything LLM-facing below is English: the system prompt
+# rule "reply in the user's language" handles localization.
 
 _agent = None  # built once per process (default model + discovered tools)
 
@@ -71,7 +70,12 @@ def _system_message(config: AgentConfig, memories: list[Memory]) -> SystemMessag
     parts = [config.system_prompt]
     if memories:
         facts = "\n".join(f"- {m.content}" for m in memories)
-        parts.append(f"Datos que recuerdas del usuario (memoria de largo plazo):\n{facts}")
+        parts.append(
+            "Facts you remember about the user (long-term memory):\n"
+            f"{facts}\n"
+            "If the user corrects or contradicts any of these facts, "
+            "silently update it with `update_memory`."
+        )
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     parts.append(f"Fecha y hora actual: {now}")
     return SystemMessage("\n\n".join(parts))
@@ -119,13 +123,13 @@ def _current_message(inbound: InboundMessage, caps: ModelCapabilities) -> HumanM
         if caps.vision and media:
             mime, b64 = media
             caption = (
-                f'El usuario envió una imagen con el mensaje: "{inbound.text}". '
+                f'The user sent an image with the message: "{inbound.text}". '
                 if inbound.text
-                else "El usuario envió una imagen. "
+                else "The user sent an image. "
             )
             return HumanMessage(
                 content=[
-                    {"type": "text", "text": caption + "Obsérvala y responde de forma natural."},
+                    {"type": "text", "text": caption + "Look at it and respond naturally."},
                     {"type": "image", "base64": b64, "mime_type": mime},
                 ]
             )
@@ -136,7 +140,7 @@ def _current_message(inbound: InboundMessage, caps: ModelCapabilities) -> HumanM
         )
         return HumanMessage(
             inbound.text
-            or "[El usuario envió una imagen que no puedes ver. Pídele que lo describa en texto.]"
+            or "[The user sent an image you cannot see. Ask them to describe it in text.]"
         )
 
     if inbound.type == "audio":
@@ -147,8 +151,8 @@ def _current_message(inbound: InboundMessage, caps: ModelCapabilities) -> HumanM
                     {
                         "type": "text",
                         "text": (
-                            "El usuario envió un mensaje de voz. Escúchalo y responde "
-                            "a su contenido de forma natural. NO digas que lo transcribiste."
+                            "The user sent a voice message. Listen to it and respond "
+                            "to its content naturally. Do NOT say you transcribed it."
                         ),
                     },
                     {"type": "audio", "base64": b64, "mime_type": mime},
@@ -160,8 +164,8 @@ def _current_message(inbound: InboundMessage, caps: ModelCapabilities) -> HumanM
             settings.llm_model,
         )
         return HumanMessage(
-            "[El usuario envió un mensaje de voz que no puedes escuchar. "
-            "Pídele amablemente que lo escriba en texto.]"
+            "[The user sent a voice message you cannot listen to. "
+            "Kindly ask them to write it as text.]"
         )
 
     # text / button / anything else the gateway normalized to text
@@ -230,6 +234,6 @@ async def run_turn(
         reply = _extract_text(result["messages"][-1]).strip()
     except Exception:
         logger.exception("Agent turn failed for conversation %s", conversation.id)
-        reply = FALLBACK_REPLY
+        reply = settings.fallback_reply
 
-    return [OutboundMessage(type="text", text=reply or FALLBACK_REPLY)]
+    return [OutboundMessage(type="text", text=reply or settings.fallback_reply)]

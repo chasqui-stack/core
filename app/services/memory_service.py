@@ -16,6 +16,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.config import settings
+from app.core.vector_search import cosine_distance
 from app.models import Memory
 
 logger = logging.getLogger(__name__)
@@ -42,10 +43,34 @@ async def retrieve_relevant(
     result = await session.exec(
         select(Memory)
         .where(Memory.contact_id == contact_id, Memory.embedding.is_not(None))
-        .order_by(Memory.embedding.cosine_distance(vector))
+        .order_by(cosine_distance(Memory.embedding, vector))
         .limit(limit)
     )
     return list(result.all())
+
+
+async def find_nearest(
+    session: AsyncSession,
+    contact_id: uuid.UUID,
+    vector: list[float],
+    max_distance: float,
+) -> Memory | None:
+    """The contact's closest memory to `vector`, or None beyond `max_distance`.
+
+    Backs dedup-on-save and the update/forget tools (app/modules/memory).
+    """
+    distance = cosine_distance(Memory.embedding, vector)
+    result = await session.exec(
+        select(Memory, distance.label("distance"))
+        .where(Memory.contact_id == contact_id, Memory.embedding.is_not(None))
+        .order_by(distance)
+        .limit(1)
+    )
+    row = result.first()
+    if row is None:
+        return None
+    memory, dist = row
+    return memory if dist <= max_distance else None
 
 
 async def extract_after_turn(
