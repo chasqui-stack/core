@@ -8,6 +8,7 @@ from app.controllers.admin import (
     auth_router,
     config_router,
     contacts_router,
+    media_router,
     tools_router,
 )
 from app.core.config import settings
@@ -67,6 +68,7 @@ admin_router.include_router(tools_router, prefix="/tools", tags=["admin-tools"])
 admin_router.include_router(
     contacts_router, prefix="/contacts", tags=["admin-contacts"]
 )
+admin_router.include_router(media_router, prefix="/media", tags=["admin-media"])
 app.include_router(admin_router)
 
 # Module admin routes — every module's register_admin_routes() mounts under

@@ -25,6 +25,8 @@ dependencies = [
     "langgraph>=0.3.0",
     "langchain-google-genai>=2.0.0",
     "pgvector>=0.3.0",
+    # Media storage — S3-compatible client (ADR-003)
+    "boto3>=1.35.0",
 ]
 
 [project.optional-dependencies]

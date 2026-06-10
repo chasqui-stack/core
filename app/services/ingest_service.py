@@ -9,15 +9,20 @@ one travels as the turn's input). Everything shares one transaction, so
 failure semantics are unchanged.
 """
 
+import base64
+import logging
 import uuid
 from datetime import datetime, timezone
 
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.core import storage
 from app.models import Contact, Conversation, Message
 from app.schemas.ingest import ContactPayload, IngestRequest, IngestResponse
 from app.services import memory_service, orchestrator
+
+logger = logging.getLogger(__name__)
 
 
 def _to_naive_utc(dt: datetime | None) -> datetime:
@@ -91,6 +96,29 @@ async def get_or_create_conversation(
     return conversation
 
 
+async def _store_inbound_media(
+    contact_id: uuid.UUID, message_id: uuid.UUID, data_uri: str
+) -> str | None:
+    """Upload an inline `data:` URI to the bucket; return the object key.
+
+    ADR-003: failures NEVER break the turn (the embeddings pattern) — any
+    problem logs and returns None, leaving media_url NULL like before the
+    storage layer existed.
+    """
+    try:
+        header, _, payload = data_uri.partition(",")
+        if not payload or not header.startswith("data:"):
+            raise ValueError("malformed data URI")
+        mime = header.removeprefix("data:").split(";", 1)[0] or "application/octet-stream"
+        data = base64.b64decode(payload)
+        key = storage.media_key(contact_id, message_id, mime)
+        await storage.put_media(key, data, mime)
+        return key
+    except Exception:
+        logger.exception("Media upload failed (message %s) — persisting NULL", message_id)
+        return None
+
+
 async def handle_ingest(session: AsyncSession, request: IngestRequest) -> IngestResponse:
     """Run one full canonical turn and return the canonical response."""
     contact = await upsert_contact(session, request.channel, request.contact)
@@ -100,21 +128,27 @@ async def handle_ingest(session: AsyncSession, request: IngestRequest) -> Ingest
     replies = await orchestrator.run_turn(session, conversation, request.message)
 
     # Persist inbound message (timestamped by the gateway when provided).
-    # Inline media (base64 data URIs) is for the current turn only — history
-    # is text-only, and the media_id in `raw` allows re-download if needed.
-    media_url = request.message.media_url
-    if media_url and media_url.startswith("data:"):
-        media_url = None
-
+    # Inline media (base64 data URIs) feeds the current turn; with storage
+    # configured (ADR-003) it is also uploaded and the OBJECT KEY persisted
+    # in media_url — otherwise history stays text-only as before (the
+    # media_id in `raw` allows re-download if needed).
     inbound = Message(
         conversation_id=conversation.id,
         direction="in",
         type=request.message.type,
         text=request.message.text,
-        media_url=media_url,
+        media_url=None,
         meta=request.message.raw,
         created_at=_to_naive_utc(request.received_at),
     )
+    media_url = request.message.media_url
+    if media_url and media_url.startswith("data:"):
+        if storage.is_configured():
+            inbound.media_url = await _store_inbound_media(
+                contact.id, inbound.id, media_url
+            )
+    else:
+        inbound.media_url = media_url
     session.add(inbound)
 
     # Persist outbound message(s)

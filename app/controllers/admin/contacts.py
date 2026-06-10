@@ -13,6 +13,7 @@ from sqlalchemy import func
 from sqlmodel import col, or_, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.core import storage
 from app.db.session import get_session
 from app.models import Contact, Conversation, Memory, Message
 from app.schemas.admin_contacts import (
@@ -191,6 +192,7 @@ async def list_messages(
             text=m.text,
             meta=m.meta,
             created_at=m.created_at,
+            has_media=storage.is_media_key(m.media_url),
         )
         for m in messages
     ]

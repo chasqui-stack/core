@@ -108,9 +108,25 @@ JWT-protected endpoints backing the [admin panel](https://github.com/chasqui-sta
   state, `config_key` and JSON Schema (feeds the admin's auto-forms).
 - `GET /admin/contacts` (+`/{id}`, `/{id}/messages`, `/{id}/memories`) —
   read-only conversation inspection. Embeddings and media payloads are never
-  serialized.
+  serialized (messages carry a `has_media` boolean instead).
+- `GET /admin/media/{message_id}` — short-lived presigned URL (as JSON) for a
+  message's stored media; the panel feeds it to `<img>`/`<audio>`.
 - `GET /admin/modules/faq/search?q=` — retrieval preview with similarity
   scores (module-contributed, like the rest of `/admin/modules/faq/*`).
+
+## Media storage (optional, ADR-003)
+
+Inbound images/audio arrive as base64 `data:` URIs (canonical contract). With
+storage configured, the core uploads each one to an **S3-compatible bucket**
+(`boto3`) at persist time — key `media/<contact_id>/<message_id>.<ext>` stored
+in `messages.media_url` — and serves it back to the admin via presigned URLs.
+Four `.env` vars (`STORAGE_ENDPOINT_URL`, `STORAGE_BUCKET`,
+`STORAGE_ACCESS_KEY`, `STORAGE_SECRET_KEY`) cover AWS S3, Cloudflare R2,
+Spaces, B2 and local MinIO (the parent's `docker-compose` ships one with the
+bucket pre-created). Unset = media is processed in-turn but not persisted —
+degraded, not broken; upload failures never break the turn. The LLM context
+stays text-only either way. See `app/core/storage.py` and
+[`adr-003`](https://github.com/chasqui-stack/chasqui/blob/main/docs/design/adr-003-media-storage.md).
 
 ## Testing
 

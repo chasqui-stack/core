@@ -4,11 +4,13 @@ These tests exercise persistence/upsert mechanics, so the agent turn is
 stubbed (the real orchestrator is covered in test_orchestrator.py).
 """
 
+import base64
 import uuid
 
 import pytest
 from sqlmodel import select
 
+from app.core import storage
 from app.models import Contact, Conversation, Message
 from app.schemas.ingest import OutboundMessage
 from app.services import orchestrator
@@ -128,3 +130,95 @@ async def test_different_channel_same_external_id_is_a_new_contact(client, sessi
     contacts = (await session.exec(select(Contact))).all()
     assert len(contacts) == 2
     assert {c.channel for c in contacts} == {"whatsapp", "web"}
+
+
+# --- Sprint 6: media persistence (ADR-003) -------------------------------
+
+JPEG_DATA_URI = "data:image/jpeg;base64," + base64.b64encode(b"fake-jpeg").decode()
+
+
+def media_payload(media_url: str = JPEG_DATA_URI) -> dict:
+    return canonical_payload(
+        message={
+            "type": "image",
+            "text": None,
+            "media_url": media_url,
+            "raw": {"media_id": "mid.test"},
+        }
+    )
+
+
+async def test_media_not_persisted_when_storage_unconfigured(client, session):
+    # Default test settings have no STORAGE_* — exactly today's behavior.
+    resp = await client.post("/ingest", json=media_payload())
+    assert resp.status_code == 200
+
+    inbound = (
+        await session.exec(select(Message).where(Message.direction == "in"))
+    ).one()
+    assert inbound.media_url is None
+
+
+async def test_media_uploaded_and_key_persisted(client, session, monkeypatch):
+    uploads: list[tuple[str, bytes, str]] = []
+
+    async def fake_put_media(key, data, content_type):
+        uploads.append((key, data, content_type))
+
+    monkeypatch.setattr(storage, "is_configured", lambda: True)
+    monkeypatch.setattr(storage, "put_media", fake_put_media)
+
+    resp = await client.post("/ingest", json=media_payload())
+    assert resp.status_code == 200
+
+    contact = (await session.exec(select(Contact))).one()
+    inbound = (
+        await session.exec(select(Message).where(Message.direction == "in"))
+    ).one()
+    expected_key = f"media/{contact.id}/{inbound.id}.jpg"
+    assert inbound.media_url == expected_key
+    assert uploads == [(expected_key, b"fake-jpeg", "image/jpeg")]
+
+
+async def test_media_upload_failure_never_breaks_the_turn(
+    client, session, monkeypatch
+):
+    async def broken_put_media(key, data, content_type):
+        raise RuntimeError("bucket down")
+
+    monkeypatch.setattr(storage, "is_configured", lambda: True)
+    monkeypatch.setattr(storage, "put_media", broken_put_media)
+
+    resp = await client.post("/ingest", json=media_payload())
+
+    assert resp.status_code == 200  # the turn answered anyway
+    inbound = (
+        await session.exec(select(Message).where(Message.direction == "in"))
+    ).one()
+    assert inbound.media_url is None  # log + NULL, the embeddings pattern
+
+
+async def test_malformed_data_uri_is_treated_as_upload_failure(
+    client, session, monkeypatch
+):
+    monkeypatch.setattr(storage, "is_configured", lambda: True)
+
+    resp = await client.post("/ingest", json=media_payload(media_url="data:image/jpeg"))
+
+    assert resp.status_code == 200
+    inbound = (
+        await session.exec(select(Message).where(Message.direction == "in"))
+    ).one()
+    assert inbound.media_url is None
+
+
+async def test_non_data_media_url_persists_verbatim(client, session):
+    resp = await client.post(
+        "/ingest", json=media_payload(media_url="https://cdn.example.com/x.jpg")
+    )
+    assert resp.status_code == 200
+
+    inbound = (
+        await session.exec(select(Message).where(Message.direction == "in"))
+    ).one()
+    assert inbound.media_url == "https://cdn.example.com/x.jpg"

@@ -48,9 +48,15 @@ class MessageItem(BaseModel):
     text: str | None
     meta: dict
     created_at: datetime
-    # media_url is intentionally absent: history never stores media (the
-    # gateway inlines data: URIs for the current turn only) and the admin
-    # must never receive blobs.
+    # media_url (the object key) is intentionally absent — the admin never
+    # receives keys or blobs. has_media=True means GET /admin/media/{id}
+    # will return a presigned URL for it (ADR-003).
+    has_media: bool = False
+
+
+class MediaUrlResponse(BaseModel):
+    url: str
+    expires_in: int
 
 
 class MessageListResponse(BaseModel):

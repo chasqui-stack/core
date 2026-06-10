@@ -70,6 +70,27 @@ class Settings(BaseSettings):
     # <=2000 HNSW on vector · 2001-4000 HNSW on halfvec · >4000 exact scan.
     embedding_dim: int = 768
 
+    # Media storage (ADR-003) — S3-compatible API via boto3. One client
+    # covers AWS S3, Cloudflare R2, Spaces, B2 and MinIO (docker-compose).
+    # OPTIONAL: leave unset and media is processed in-turn but not persisted
+    # (degraded, not broken). endpoint_url unset = AWS S3 default.
+    storage_endpoint_url: str | None = None
+    storage_bucket: str | None = None
+    storage_access_key: str | None = None
+    storage_secret_key: str | None = None
+    storage_region: str | None = None
+    # Split-horizon deployments only (e.g. docker-compose): presigned URLs
+    # embed the signing endpoint, and the browser may not resolve the
+    # internal one (http://minio:9000). Set this to the browser-reachable
+    # endpoint; unset = same as STORAGE_ENDPOINT_URL.
+    storage_public_endpoint_url: str | None = None
+
+    @property
+    def storage_configured(self) -> bool:
+        return bool(
+            self.storage_bucket and self.storage_access_key and self.storage_secret_key
+        )
+
     @property
     def database_url(self) -> str:
         return (
