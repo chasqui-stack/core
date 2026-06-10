@@ -40,8 +40,8 @@ class ToolErrorMiddleware(AgentMiddleware):
             logger.exception("Tool '%s' failed", tool_name)
             return ToolMessage(
                 content=(
-                    f"La herramienta '{tool_name}' falló: {exc}. "
-                    "Discúlpate brevemente y continúa sin ella."
+                    f"The tool '{tool_name}' failed: {exc}. "
+                    "Apologize briefly and carry on without it."
                 ),
                 tool_call_id=request.tool_call["id"],
                 status="error",

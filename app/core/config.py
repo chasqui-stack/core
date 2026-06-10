@@ -45,6 +45,15 @@ class Settings(BaseSettings):
     # Conversation history window fed to the agent each turn
     history_limit: int = 20
 
+    # Sent verbatim to the end user when a turn fails — the ONE user-facing
+    # literal in the backend, so it's operator-configurable (set it in your
+    # users' language). Everything LLM-facing is English; the system prompt
+    # rule "reply in the user's language" localizes the agent itself.
+    fallback_reply: str = (
+        "Sorry, I had trouble processing your message. "
+        "Could you try again in a moment?"
+    )
+
     # Modality overrides for models the capability registry doesn't know
     # (see app/core/llm_capabilities.py). None = auto-detect by model name.
     llm_supports_vision: bool | None = None

@@ -23,7 +23,7 @@ async def verify_api_key(
     if x_internal_api_key != settings.internal_api_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API key inválida",
+            detail="Invalid API key",
         )
 
     return x_internal_api_key

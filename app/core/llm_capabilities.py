@@ -3,7 +3,7 @@
 The gateway normalizes text/audio/image/button into the canonical contract,
 but whether the LLM can actually SEE an image or HEAR an audio depends on the
 configured model. The orchestrator (Sprint 3) checks these flags to degrade
-gracefully — e.g. reply "envíamelo como texto" instead of failing the turn.
+gracefully — e.g. ask the user for a text version instead of failing the turn.
 
 Resolution order:
 1. Explicit env overrides (LLM_SUPPORTS_VISION / LLM_SUPPORTS_AUDIO) — for

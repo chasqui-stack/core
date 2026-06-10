@@ -26,15 +26,15 @@ async def _get_conversation(runtime: ToolRuntime[TurnContext]) -> Conversation:
 
 @tool
 async def human_handoff(reason: str, runtime: ToolRuntime[TurnContext]) -> str:
-    """Deriva la conversación a un agente humano.
+    """Hand the conversation off to a human agent.
 
-    Usa esta herramienta cuando:
-    - El usuario pide explícitamente hablar con una persona.
-    - El usuario está molesto o frustrado y no logras ayudarlo.
-    - El caso requiere acciones que no puedes realizar con tus herramientas.
+    Use this tool when:
+    - The user explicitly asks to talk to a person.
+    - The user is upset or frustrated and you cannot help them.
+    - The case requires actions your tools cannot perform.
 
     Args:
-        reason: Motivo breve de la derivación (ej: "solicita asesor de ventas").
+        reason: Brief handoff reason (e.g. "asks for a sales rep").
     """
     conversation = await _get_conversation(runtime)
     # Reassign (don't mutate) so SQLAlchemy detects the JSONB change
@@ -44,8 +44,8 @@ async def human_handoff(reason: str, runtime: ToolRuntime[TurnContext]) -> str:
     }
     runtime.context.session.add(conversation)
     return (
-        "Conversación marcada para atención humana. Informa al usuario que "
-        "una persona del equipo lo contactará pronto por este mismo chat."
+        "Conversation flagged for human attention. Tell the user someone "
+        "from the team will reach out soon through this same chat."
     )
 
 
@@ -58,18 +58,18 @@ async def lead_capture(
     email: str | None = None,
     notes: str | None = None,
 ) -> str:
-    """Registra al usuario como lead (cliente potencial interesado).
+    """Register the user as a lead (interested potential customer).
 
-    Usa esta herramienta cuando el usuario muestre intención de compra o
-    pida que lo contacten, y ya tengas al menos su nombre y qué le interesa.
-    Pide los datos que falten de forma natural antes de llamarla.
+    Use this tool when the user shows purchase intent or asks to be
+    contacted, and you already have at least their name and interest.
+    Naturally ask for any missing details before calling it.
 
     Args:
-        name: Nombre del usuario.
-        interest: Producto/servicio que le interesa.
-        phone: Teléfono de contacto (opcional).
-        email: Correo de contacto (opcional).
-        notes: Contexto adicional útil para el equipo comercial (opcional).
+        name: The user's name.
+        interest: Product/service they are interested in.
+        phone: Contact phone (optional).
+        email: Contact email (optional).
+        notes: Extra context useful for the sales team (optional).
     """
     conversation = await _get_conversation(runtime)
     lead = {
@@ -86,7 +86,7 @@ async def lead_capture(
         "leads": [*state.get("leads", []), lead],
     }
     runtime.context.session.add(conversation)
-    return "Lead registrado. Agradece al usuario y confirma que el equipo lo contactará."
+    return "Lead saved. Thank the user and confirm the team will contact them."
 
 
 class HandoffModule:

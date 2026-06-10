@@ -42,7 +42,10 @@ unknown models degrade to text-only with a warning (override with
 `init_embeddings()`): `EMBEDDING_PROVIDER` google/openai/ollama. The vector
 width is **`EMBEDDING_DIM` (default 768) — provision-time config**: it's
 baked into the schema on the first migrate; changing it (or the provider)
-later means a column migration + re-embedding. Rationale: parent repo
+later means a column migration + re-embedding. ANN indexes are
+**auto-selected from the dim** (`app/core/vector_search.py`): ≤2000 → HNSW
+on `vector` · 2001–4000 → HNSW on a `halfvec` cast · >4000 → exact scan +
+startup warning. Rationale: parent repo
 `docs/design/adr-001-embeddings-provider-dims.md` (and ADR-002 for why
 Postgres-only).
 
@@ -73,9 +76,21 @@ Tools access the DB session / contact / conversation / config through
 `runtime: ToolRuntime[TurnContext]` (`app/services/agent_context.py`).
 Disable any tool at runtime via `agent_config.enabled_tools`
 (`{"my_tool": false}`); tool exceptions become error `ToolMessage`s — the
-graph never crashes. Shipped examples: `faq` (stub until Sprint 4 RAG),
-`handoff` (human handoff + lead capture), `memory` (silent fact saving).
-Full reference module: parent repo `docs/design/module-example-commercial-locations.md`.
+graph never crashes.
+
+Beyond tools, a module can contribute **its own tables**
+(`register_models()` — `registry.discover()` runs in `alembic/env.py` and
+the test conftest so they reach the metadata), **admin endpoints**
+(`register_admin_routes()` — mounted JWT-protected under
+`/admin/modules/<name>`) and **typed config knobs** (`config_schema()` →
+stored in `agent_config.tool_config`, surfaced as auto-forms in Sprint 5).
+
+Shipped examples: **`faq`** — the full-contract reference: Q&A knowledge
+base with pgvector RAG (embed-on-save, threshold retrieval, honest miss),
+admin CRUD + re-embed at `/admin/modules/faq/*`; **`handoff`** (human
+handoff + lead capture); **`memory`** (silent fact saving with
+dedup-on-save, plus `update_memory`/`forget_memory` corrections).
+Full walkthrough: parent repo `docs/design/module-example-commercial-locations.md`.
 
 ## Testing
 

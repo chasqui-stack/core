@@ -67,7 +67,7 @@ async def create_admin(
     statement = select(AdminUser).where(AdminUser.email == email)
     result = await session.execute(statement)
     if result.scalar_one_or_none():
-        raise ValueError("Este email de admin ya está registrado")
+        raise ValueError("This admin email is already registered")
 
     admin = AdminUser(
         email=email,

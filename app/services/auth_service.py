@@ -38,4 +38,4 @@ def decode_token(token: str) -> dict:
             token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm]
         )
     except JWTError:
-        raise ValueError("Token inválido")
+        raise ValueError("Invalid token")

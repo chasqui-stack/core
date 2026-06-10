@@ -40,7 +40,7 @@ async def admin_login(
     if not admin:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Credenciales inválidas",
+            detail="Invalid credentials",
         )
 
     access_token = create_admin_access_token(admin.id, admin.email, admin.role)
@@ -65,14 +65,14 @@ async def admin_refresh(
         if payload.get("type") != "admin_refresh":
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token de refresh inválido",
+                detail="Invalid refresh token",
             )
 
         admin_id = payload.get("sub")
         if not admin_id:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token de refresh inválido",
+                detail="Invalid refresh token",
             )
 
         # Get admin to verify they still exist and are active
@@ -80,7 +80,7 @@ async def admin_refresh(
         if not admin or not admin.is_active:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Admin no encontrado o inactivo",
+                detail="Admin not found or inactive",
             )
 
         # Create new tokens
@@ -95,7 +95,7 @@ async def admin_refresh(
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token de refresh inválido",
+            detail="Invalid refresh token",
         )
 
 
@@ -110,7 +110,7 @@ async def get_current_admin_info(
     if not admin:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Admin no encontrado",
+            detail="Admin not found",
         )
 
     return AdminUserResponse(

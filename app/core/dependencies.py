@@ -22,7 +22,7 @@ async def get_current_admin(
     """Resolve the current admin from a JWT (type='admin_access')."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="No se pudieron validar las credenciales de admin",
+        detail="Could not validate admin credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
 
@@ -58,7 +58,7 @@ def require_admin(min_role: str = "super_admin"):
         if admin.role != min_role and min_role == "super_admin":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Permisos de admin insuficientes",
+                detail="Insufficient admin permissions",
             )
         return admin
 
