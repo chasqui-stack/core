@@ -309,7 +309,7 @@ async def send_operator_message(
         )
 
     try:
-        await channel_send.send_message(
+        sent = await channel_send.send_message(
             contact,
             type=payload.type,
             text=payload.text,
@@ -327,7 +327,12 @@ async def send_operator_message(
         direction="out",
         type=payload.type,
         text=payload.text,
-        meta={"sent_by": str(admin.admin_id), "sent_by_email": admin.email},
+        # wamid correlates async delivery statuses (POST /channel/status)
+        meta={
+            "sent_by": str(admin.admin_id),
+            "sent_by_email": admin.email,
+            "wamid": sent.get("message_id"),
+        },
     )
     if payload.filename:
         message.meta = {**message.meta, "filename": payload.filename}

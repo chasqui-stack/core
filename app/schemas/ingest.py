@@ -52,3 +52,17 @@ class IngestResponse(BaseModel):
 
     messages: list[OutboundMessage]
     conversation_id: uuid.UUID
+
+
+class ChannelStatusUpdate(BaseModel):
+    """Gateway → core: async delivery status for an outbound message (ADR-004).
+
+    Channels like WhatsApp ACCEPT a send (200 + message id) and may reject it
+    asynchronously via a status webhook — the gateway forwards that here so
+    the admin panel can show the truth instead of a silently-lost message.
+    """
+
+    message_id: str = Field(min_length=1, description="The channel's message id (wamid)")
+    status: str = Field(default="failed", description='"failed" (more later)')
+    code: str | None = None
+    detail: str | None = None

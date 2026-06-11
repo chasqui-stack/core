@@ -393,3 +393,43 @@ async def test_detail_exposes_mode_and_window_anchor(client, session, admin_head
     body = resp.json()
     assert body["mode"] == "human"
     assert body["last_inbound_at"] is not None
+
+
+# --- async delivery status (gateway → core) ---------------------------------
+
+
+async def test_channel_status_marks_message_failed(client, session):
+    contact = await make_contact(session)
+    conversation = await make_conversation(session, contact, mode="human")
+    message = Message(
+        conversation_id=conversation.id,
+        direction="out",
+        type="audio",
+        meta={"sent_by": "x", "wamid": "wamid.FAIL1"},
+    )
+    session.add(message)
+    await session.commit()
+
+    resp = await client.post(
+        "/channel/status",
+        json={
+            "message_id": "wamid.FAIL1",
+            "status": "failed",
+            "code": "131053",
+            "detail": "Media upload error",
+        },
+    )
+
+    assert resp.status_code == 204
+    await session.refresh(message)
+    assert message.meta["delivery_status"] == "failed"
+    assert message.meta["delivery_code"] == "131053"
+    assert message.meta["delivery_detail"] == "Media upload error"
+
+
+async def test_channel_status_unknown_wamid_is_acknowledged(client, session):
+    resp = await client.post(
+        "/channel/status",
+        json={"message_id": "wamid.UNKNOWN", "status": "failed"},
+    )
+    assert resp.status_code == 204
