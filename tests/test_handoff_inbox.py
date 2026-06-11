@@ -214,13 +214,13 @@ async def test_operator_message_sends_then_persists(
     await make_conversation(session, contact, mode="human")
     await session.commit()
 
-    sent: list[tuple[Contact, str]] = []
+    sent: list[dict] = []
 
-    async def fake_send_text(contact_, text):
-        sent.append((contact_, text))
+    async def fake_send_message(contact_, **kwargs):
+        sent.append({"contact": contact_, **kwargs})
         return {"status": "sent", "message_id": "wamid.X"}
 
-    monkeypatch.setattr(channel_send, "send_text", fake_send_text)
+    monkeypatch.setattr(channel_send, "send_message", fake_send_message)
 
     resp = await client.post(
         f"/admin/contacts/{contact.id}/messages",
@@ -234,7 +234,8 @@ async def test_operator_message_sends_then_persists(
     assert body["text"] == "Hola, soy Ana del equipo"
     assert body["meta"]["sent_by_email"] == "admin@test.local"
 
-    assert sent and sent[0][1] == "Hola, soy Ana del equipo"
+    assert sent and sent[0]["text"] == "Hola, soy Ana del equipo"
+    assert sent[0]["type"] == "text"
     message = (await session.exec(select(Message))).one()
     assert message.direction == "out"
     assert message.meta["sent_by"]  # the admin's id
@@ -247,10 +248,10 @@ async def test_operator_message_send_failure_persists_nothing(
     await make_conversation(session, contact, mode="human")
     await session.commit()
 
-    async def failing_send_text(contact_, text):
+    async def failing_send_message(contact_, **kwargs):
         raise channel_send.ChannelSendError("WINDOW_EXPIRED", "outside the 24h window")
 
-    monkeypatch.setattr(channel_send, "send_text", failing_send_text)
+    monkeypatch.setattr(channel_send, "send_message", failing_send_message)
 
     resp = await client.post(
         f"/admin/contacts/{contact.id}/messages",
@@ -261,6 +262,74 @@ async def test_operator_message_send_failure_persists_nothing(
     assert resp.status_code == 502
     assert resp.json()["detail"]["code"] == "WINDOW_EXPIRED"
     assert (await session.exec(select(Message))).all() == []  # thread never lies
+
+
+async def test_operator_media_message_sends_and_persists_key(
+    client, session, admin_headers, monkeypatch
+):
+    import base64
+
+    from app.core import storage
+
+    contact = await make_contact(session)
+    await make_conversation(session, contact, mode="human")
+    await session.commit()
+
+    sent: list[dict] = []
+
+    async def fake_send_message(contact_, **kwargs):
+        sent.append(kwargs)
+        return {"status": "sent", "message_id": "wamid.M"}
+
+    uploads: list[tuple[str, bytes, str]] = []
+
+    async def fake_put_media(key, data, content_type):
+        uploads.append((key, data, content_type))
+
+    monkeypatch.setattr(channel_send, "send_message", fake_send_message)
+    monkeypatch.setattr(storage, "is_configured", lambda: True)
+    monkeypatch.setattr(storage, "put_media", fake_put_media)
+
+    data_uri = "data:image/jpeg;base64," + base64.b64encode(b"fake-jpeg").decode()
+    resp = await client.post(
+        f"/admin/contacts/{contact.id}/messages",
+        json={"type": "image", "text": "mira", "media_data_uri": data_uri},
+        headers=admin_headers,
+    )
+
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["type"] == "image"
+    assert body["has_media"] is True
+    assert "media_url" not in body  # keys never serialized (ADR-003)
+
+    assert sent[0]["type"] == "image"
+    assert sent[0]["media_url"] == data_uri
+    message = (await session.exec(select(Message))).one()
+    assert message.media_url == f"media/{contact.id}/{message.id}.jpg"
+    assert uploads and uploads[0][1] == b"fake-jpeg"
+
+
+async def test_operator_media_message_validation(client, session, admin_headers):
+    contact = await make_contact(session)
+    await make_conversation(session, contact, mode="human")
+    await session.commit()
+
+    # media type without a data URI
+    no_media = await client.post(
+        f"/admin/contacts/{contact.id}/messages",
+        json={"type": "image", "text": "sin adjunto"},
+        headers=admin_headers,
+    )
+    assert no_media.status_code == 422
+
+    # text type without text
+    no_text = await client.post(
+        f"/admin/contacts/{contact.id}/messages",
+        json={"type": "text", "text": "  "},
+        headers=admin_headers,
+    )
+    assert no_text.status_code == 422
 
 
 # --- inbox listing ---------------------------------------------------------

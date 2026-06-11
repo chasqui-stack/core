@@ -49,10 +49,19 @@ def _error_from_response(response: httpx.Response) -> ChannelSendError:
     return ChannelSendError(code, message)
 
 
-async def send_text(contact: Contact, text: str) -> dict:
-    """POST one canonical text message through the contact's channel gateway.
+async def send_message(
+    contact: Contact,
+    *,
+    type: str = "text",
+    text: str | None = None,
+    media_url: str | None = None,
+    filename: str | None = None,
+) -> dict:
+    """POST one canonical message through the contact's channel gateway.
 
-    Returns the gateway's success body; raises ChannelSendError otherwise.
+    `media_url` is a base64 `data:` URI for image/document/audio — the exact
+    mirror of the inbound contract (§5). Returns the gateway's success body;
+    raises ChannelSendError otherwise.
     """
     url = send_url_for(contact.channel)
     if not url:
@@ -68,7 +77,12 @@ async def send_text(contact: Contact, text: str) -> dict:
             "external_id": contact.external_id,
             "wa_id": contact.wa_id,
         },
-        "message": {"type": "text", "text": text},
+        "message": {
+            "type": type,
+            "text": text,
+            "media_url": media_url,
+            "filename": filename,
+        },
     }
     headers = (
         {"X-Internal-API-Key": settings.internal_api_key}

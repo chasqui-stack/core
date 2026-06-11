@@ -136,6 +136,9 @@ Operator replies go out through the **canonical outbound seam**
 (`app/services/channel_send.py`): each gateway exposes `POST /send` (the
 mirror of `/ingest`, same `INTERNAL_API_KEY`) and the core resolves the URL
 per channel from `.env` — `CHANNEL_WHATSAPP_SEND_URL`, one var per channel.
+Text and media alike: image/document/audio travel as base64 `data:` URIs
+(the mirror of the inbound contract) and are also stored in the bucket so
+the admin timeline shows what the operator sent.
 
 Handoffs can notify, both optional and best-effort (`app/services/notify_service.py`):
 `NOTIFY_WEBHOOK_URL` (Slack/Zapier/n8n) and/or **SMTP email** via stdlib

@@ -65,7 +65,14 @@ class ModeResponse(BaseModel):
 
 
 class OperatorMessageCreate(BaseModel):
-    text: str = Field(min_length=1, max_length=4096)
+    """An operator reply: plain text, or media carried as a base64 data URI
+    (the mirror of the inbound contract — never a URL the gateway can't
+    fetch). Caption travels in `text` for image/document."""
+
+    type: Literal["text", "image", "document", "audio"] = "text"
+    text: str | None = Field(default=None, max_length=4096)
+    media_data_uri: str | None = None
+    filename: str | None = None  # documents: shown to the user by WhatsApp
 
 
 class MessageItem(BaseModel):

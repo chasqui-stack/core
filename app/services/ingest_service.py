@@ -9,7 +9,6 @@ one travels as the turn's input). Everything shares one transaction, so
 failure semantics are unchanged.
 """
 
-import base64
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -106,14 +105,7 @@ async def _store_inbound_media(
     storage layer existed.
     """
     try:
-        header, _, payload = data_uri.partition(",")
-        if not payload or not header.startswith("data:"):
-            raise ValueError("malformed data URI")
-        mime = header.removeprefix("data:").split(";", 1)[0] or "application/octet-stream"
-        data = base64.b64decode(payload)
-        key = storage.media_key(contact_id, message_id, mime)
-        await storage.put_media(key, data, mime)
-        return key
+        return await storage.put_data_uri(contact_id, message_id, data_uri)
     except Exception:
         logger.exception("Media upload failed (message %s) — persisting NULL", message_id)
         return None

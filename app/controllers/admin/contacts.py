@@ -7,6 +7,7 @@ conversation id — messages and memories hang off the contact. Sprint 7
 mode and sending an operator message through the channel's `/send`.
 """
 
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -35,6 +36,8 @@ from app.schemas.admin_contacts import (
 from app.services import channel_send
 from app.services.ingest_service import get_or_create_conversation
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 
@@ -48,6 +51,35 @@ def _handoff_fields(conversation: Conversation | None) -> tuple[str | None, str 
         return None, None
     handoff = conversation.conversation_state.get("handoff") or {}
     return handoff.get("reason"), handoff.get("at")
+
+
+# Meta's media size limits (decoded bytes) — validated before bothering the
+# gateway; base64 inflates ~4/3, so the JSON body stays bounded too.
+_MEDIA_MAX_BYTES = {"image": 5 * 1024 * 1024, "audio": 16 * 1024 * 1024,
+                    "document": 25 * 1024 * 1024}
+
+
+def _validate_operator_message(payload: OperatorMessageCreate) -> None:
+    if payload.type == "text":
+        if not (payload.text or "").strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Text messages need a non-empty text",
+            )
+        return
+    if not payload.media_data_uri or not payload.media_data_uri.startswith("data:"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{payload.type} messages need media_data_uri as a base64 data: URI",
+        )
+    # 3/4 of the base64 length ≈ decoded size (cheap, no decode)
+    approx_bytes = (len(payload.media_data_uri) * 3) // 4
+    if approx_bytes > _MEDIA_MAX_BYTES[payload.type]:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"{payload.type} exceeds the "
+            f"{_MEDIA_MAX_BYTES[payload.type] // (1024 * 1024)}MB channel limit",
+        )
 
 
 async def _last_inbound_by_conv(
@@ -253,13 +285,17 @@ async def send_operator_message(
     admin: CurrentAdmin,
     session: AsyncSession = Depends(get_session),
 ):
-    """Operator reply, pushed through the channel's `/send` (ADR-004).
+    """Operator reply (text or media), pushed through the channel's `/send`.
 
     Only in human mode (409 otherwise — the agent owns agent-mode replies).
     Send-then-persist: a failed send persists nothing, so the thread never
     shows a message the user didn't get; the gateway's error code
     (WINDOW_EXPIRED, NO_WA_ID, ...) flows through for the panel to explain.
+    Media travels as a base64 data URI (mirror of inbound, ADR-004) and is
+    also uploaded to the bucket so the timeline can render it (ADR-003 —
+    upload failures log + NULL, never undo a delivered message).
     """
+    _validate_operator_message(payload)
     contact = await _get_contact_or_404(session, contact_id)
     conversation = (
         await session.exec(
@@ -273,7 +309,13 @@ async def send_operator_message(
         )
 
     try:
-        await channel_send.send_text(contact, payload.text)
+        await channel_send.send_message(
+            contact,
+            type=payload.type,
+            text=payload.text,
+            media_url=payload.media_data_uri,
+            filename=payload.filename,
+        )
     except channel_send.ChannelSendError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -283,10 +325,22 @@ async def send_operator_message(
     message = Message(
         conversation_id=conversation.id,
         direction="out",
-        type="text",
+        type=payload.type,
         text=payload.text,
         meta={"sent_by": str(admin.admin_id), "sent_by_email": admin.email},
     )
+    if payload.filename:
+        message.meta = {**message.meta, "filename": payload.filename}
+    if payload.media_data_uri and storage.is_configured():
+        try:
+            message.media_url = await storage.put_data_uri(
+                contact.id, message.id, payload.media_data_uri
+            )
+        except Exception:
+            logger.exception(
+                "Outbound media upload failed (message %s) — persisting NULL",
+                message.id,
+            )
     session.add(message)
     conversation.updated_at = _utcnow_naive()
     session.add(conversation)
@@ -299,7 +353,7 @@ async def send_operator_message(
         text=message.text,
         meta=message.meta,
         created_at=message.created_at,
-        has_media=False,
+        has_media=storage.is_media_key(message.media_url),
     )
 
 

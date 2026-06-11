@@ -12,6 +12,7 @@ unconfigured deployments and tests never pay the boto3 import/setup cost.
 """
 
 import asyncio
+import base64
 import logging
 import mimetypes
 import uuid
@@ -35,8 +36,13 @@ _EXT_BY_MIME = {
     "audio/ogg": "ogg",
     "audio/mpeg": "mp3",
     "audio/mp4": "m4a",
+    "audio/webm": "webm",
     "video/mp4": "mp4",
     "application/pdf": "pdf",
+    "application/msword": "doc",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/vnd.ms-excel": "xls",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
 }
 
 _client = None
@@ -99,6 +105,29 @@ def media_key(contact_id: uuid.UUID, message_id: uuid.UUID, mime: str) -> str:
 
 def is_media_key(value: str | None) -> bool:
     return bool(value and value.startswith(MEDIA_KEY_PREFIX))
+
+
+def parse_data_uri(uri: str) -> tuple[str, bytes]:
+    """'data:<mime>;base64,<payload>' → (mime, bytes). Raises ValueError."""
+    header, _, payload = uri.partition(",")
+    if not payload or not header.startswith("data:"):
+        raise ValueError("malformed data URI")
+    mime = header.removeprefix("data:").split(";", 1)[0] or "application/octet-stream"
+    return mime, base64.b64decode(payload)
+
+
+async def put_data_uri(
+    contact_id: uuid.UUID, message_id: uuid.UUID, data_uri: str
+) -> str:
+    """Upload an inline `data:` URI under the canonical media key; return it.
+
+    Shared by inbound (ingest) and outbound (operator messages) persistence.
+    Raises on failure — callers apply the log-and-NULL posture (ADR-003).
+    """
+    mime, data = parse_data_uri(data_uri)
+    key = media_key(contact_id, message_id, mime)
+    await put_media(key, data, mime)
+    return key
 
 
 async def put_media(key: str, data: bytes, content_type: str) -> None:
