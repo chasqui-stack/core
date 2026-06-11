@@ -27,6 +27,11 @@ class Conversation(SQLModel, table=True):
         foreign_key="contacts.id", nullable=False, unique=True, index=True
     )
 
+    # Who owns the replies (ADR-004): "agent" (default) or "human". The ingest
+    # pipeline checks this FIRST — human mode persists the inbound and runs no
+    # agent turn. A real indexed column, never a JSONB flag.
+    mode: str = Field(default="agent", max_length=8, nullable=False, index=True)
+
     # Orchestrator state (LangGraph) — opaque to everything but the orchestrator
     conversation_state: dict = Field(
         default_factory=dict,

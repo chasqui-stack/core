@@ -85,6 +85,28 @@ class Settings(BaseSettings):
     # endpoint; unset = same as STORAGE_ENDPOINT_URL.
     storage_public_endpoint_url: str | None = None
 
+    # Canonical outbound seam (ADR-004) — one var per channel, the mirror of
+    # /ingest. The core POSTs operator messages to the channel gateway's
+    # /send with the same INTERNAL_API_KEY. Unset = sends from the admin
+    # panel fail with a clear error for that channel.
+    channel_whatsapp_send_url: str | None = None
+
+    # Handoff notifications (ADR-004) — both OPTIONAL, both best-effort
+    # (failures log, never break the turn). Webhook covers Slack/Zapier/n8n;
+    # SMTP covers email via any relay (Brevo, Mailgun, SES, Gmail app
+    # password) — "where is your relay", never "which provider".
+    notify_webhook_url: str | None = None
+    smtp_host: str | None = None
+    smtp_port: int = 587  # 587 = STARTTLS, 465 = implicit SSL
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str | None = None
+    notify_email_to: str | None = None  # comma-separated recipients
+
+    @property
+    def smtp_configured(self) -> bool:
+        return bool(self.smtp_host and self.smtp_from and self.notify_email_to)
+
     @property
     def storage_configured(self) -> bool:
         return bool(

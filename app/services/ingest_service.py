@@ -119,19 +119,17 @@ async def _store_inbound_media(
         return None
 
 
-async def handle_ingest(session: AsyncSession, request: IngestRequest) -> IngestResponse:
-    """Run one full canonical turn and return the canonical response."""
-    contact = await upsert_contact(session, request.channel, request.contact)
-    conversation = await get_or_create_conversation(session, contact.id)
+async def _persist_inbound(
+    session: AsyncSession, contact: Contact, conversation: Conversation,
+    request: IngestRequest,
+) -> Message:
+    """Persist the inbound message (timestamped by the gateway when provided).
 
-    # Agent turn (LangGraph — history query must not see the current message yet)
-    replies = await orchestrator.run_turn(session, conversation, request.message)
-
-    # Persist inbound message (timestamped by the gateway when provided).
-    # Inline media (base64 data URIs) feeds the current turn; with storage
-    # configured (ADR-003) it is also uploaded and the OBJECT KEY persisted
-    # in media_url — otherwise history stays text-only as before (the
-    # media_id in `raw` allows re-download if needed).
+    Inline media (base64 data URIs) feeds the current turn; with storage
+    configured (ADR-003) it is also uploaded and the OBJECT KEY persisted
+    in media_url — otherwise history stays text-only as before (the
+    media_id in `raw` allows re-download if needed).
+    """
     inbound = Message(
         conversation_id=conversation.id,
         direction="in",
@@ -150,6 +148,29 @@ async def handle_ingest(session: AsyncSession, request: IngestRequest) -> Ingest
     else:
         inbound.media_url = media_url
     session.add(inbound)
+    return inbound
+
+
+async def handle_ingest(session: AsyncSession, request: IngestRequest) -> IngestResponse:
+    """Run one full canonical turn and return the canonical response."""
+    contact = await upsert_contact(session, request.channel, request.contact)
+    conversation = await get_or_create_conversation(session, contact.id)
+
+    # Human mode (ADR-004) — checked FIRST: a human owns this thread, so the
+    # inbound is persisted but NO agent turn runs. The empty reply list is
+    # silence on every channel (gateways render 0..N messages), which is how
+    # channels inherit human mode with zero changes.
+    if conversation.mode == "human":
+        await _persist_inbound(session, contact, conversation, request)
+        conversation.updated_at = _to_naive_utc(None)
+        session.add(conversation)
+        await session.flush()
+        return IngestResponse(messages=[], conversation_id=conversation.id)
+
+    # Agent turn (LangGraph — history query must not see the current message yet)
+    replies = await orchestrator.run_turn(session, conversation, request.message)
+
+    await _persist_inbound(session, contact, conversation, request)
 
     # Persist outbound message(s)
     for reply in replies:

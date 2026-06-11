@@ -42,10 +42,26 @@ TEST_DB_URL = (
 
 
 @pytest.fixture(autouse=True)
-def _no_internal_key(monkeypatch):
+def _no_dev_env(monkeypatch):
     """Tests must not depend on the developer's .env — /ingest is open by
-    default; the auth suite (test_ingest_auth.py) sets its own key on top."""
-    monkeypatch.setattr(settings, "internal_api_key", None)
+    default (the auth suite sets its own key on top), storage/outbound/notify
+    are unconfigured (tests that need them monkeypatch their own values)."""
+    for field in (
+        "internal_api_key",
+        "storage_endpoint_url",
+        "storage_bucket",
+        "storage_access_key",
+        "storage_secret_key",
+        "storage_public_endpoint_url",
+        "channel_whatsapp_send_url",
+        "notify_webhook_url",
+        "smtp_host",
+        "smtp_user",
+        "smtp_password",
+        "smtp_from",
+        "notify_email_to",
+    ):
+        monkeypatch.setattr(settings, field, None)
 
 
 async def _prepare_database() -> None:

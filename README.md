@@ -90,9 +90,12 @@ understands.
 
 Shipped examples: **`faq`** — the full-contract reference: Q&A knowledge
 base with pgvector RAG (embed-on-save, threshold retrieval, honest miss),
-admin CRUD + re-embed at `/admin/modules/faq/*`; **`handoff`** (human
-handoff + lead capture); **`memory`** (silent fact saving with
-dedup-on-save, plus `update_memory`/`forget_memory` corrections).
+admin CRUD + re-embed at `/admin/modules/faq/*`; **`handoff`** — human
+handoff (flips the conversation to human mode + optional webhook/email
+notification) and lead capture into a module-owned `leads` table with
+operator-configurable required/extra fields; **`memory`** (silent fact
+saving with dedup-on-save, plus `update_memory`/`forget_memory`
+corrections).
 Full walkthrough: parent repo `docs/design/module-example-commercial-locations.md`.
 
 ## Admin panel API
@@ -107,12 +110,37 @@ JWT-protected endpoints backing the [admin panel](https://github.com/chasqui-sta
 - `GET /admin/tools` — the tool registry: every module with its tools, enable
   state, `config_key` and JSON Schema (feeds the admin's auto-forms).
 - `GET /admin/contacts` (+`/{id}`, `/{id}/messages`, `/{id}/memories`) —
-  read-only conversation inspection. Embeddings and media payloads are never
-  serialized (messages carry a `has_media` boolean instead).
+  conversation inspection. Embeddings and media payloads are never
+  serialized (messages carry a `has_media` boolean instead). The list grows
+  inbox metadata (Sprint 7): `mode`, handoff reason, `last_inbound_at`,
+  a `?mode=human` filter and attention-first ordering.
+- `PUT /admin/contacts/{id}/mode` — take over (`human`) / resume the bot
+  (`agent`); `POST /admin/contacts/{id}/messages` — operator reply pushed
+  through the channel gateway's `/send` (409 in agent mode; send-then-persist,
+  gateway error codes like `WINDOW_EXPIRED` pass through). ADR-004.
+- `GET /admin/modules/handoff/leads` — captured leads (module-contributed).
 - `GET /admin/media/{message_id}` — short-lived presigned URL (as JSON) for a
   message's stored media; the panel feeds it to `<img>`/`<audio>`.
 - `GET /admin/modules/faq/search?q=` — retrieval preview with similarity
   scores (module-contributed, like the rest of `/admin/modules/faq/*`).
+
+## Human handoff & outbound (ADR-004)
+
+`conversations.mode: "agent" | "human"` is checked **first** by `/ingest`:
+in human mode the inbound is persisted, **no agent turn runs**, and the
+canonical response is an empty `messages` list — silence on every channel,
+zero gateway changes. The `human_handoff` tool flips the mode; the admin
+flips it back.
+
+Operator replies go out through the **canonical outbound seam**
+(`app/services/channel_send.py`): each gateway exposes `POST /send` (the
+mirror of `/ingest`, same `INTERNAL_API_KEY`) and the core resolves the URL
+per channel from `.env` — `CHANNEL_WHATSAPP_SEND_URL`, one var per channel.
+
+Handoffs can notify, both optional and best-effort (`app/services/notify_service.py`):
+`NOTIFY_WEBHOOK_URL` (Slack/Zapier/n8n) and/or **SMTP email** via stdlib
+`smtplib` — any relay works (Brevo, Mailgun, SES, Gmail app password):
+`SMTP_HOST/PORT/USER/PASSWORD/FROM` + `NOTIFY_EMAIL_TO`.
 
 ## Media storage (optional, ADR-003)
 
