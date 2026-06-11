@@ -20,7 +20,7 @@ make dev                 # http://localhost:8090  (/docs)
 ## The agent
 
 `POST /ingest` runs a real LangGraph turn (LangChain v1 `create_agent`):
-DB-editable system prompt (`agent_config`, Sprint 5 admin UI) + conversation
+DB-editable system prompt (`agent_config`, editable in the admin panel) + conversation
 history + long-term memories (pgvector) + the current message — multimodal
 (image/audio content blocks) when the configured model supports it.
 
@@ -112,7 +112,7 @@ JWT-protected endpoints backing the [admin panel](https://github.com/chasqui-sta
 - `GET /admin/contacts` (+`/{id}`, `/{id}/messages`, `/{id}/memories`) —
   conversation inspection. Embeddings and media payloads are never
   serialized (messages carry a `has_media` boolean instead). The list grows
-  inbox metadata (Sprint 7): `mode`, handoff reason, `last_inbound_at`,
+  inbox metadata (ADR-004): `mode`, handoff reason, `last_inbound_at`,
   a `?mode=human` filter and attention-first ordering.
 - `PUT /admin/contacts/{id}/mode` — take over (`human`) / resume the bot
   (`agent`); `POST /admin/contacts/{id}/messages` — operator reply pushed
