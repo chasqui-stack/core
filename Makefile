@@ -1,8 +1,8 @@
 .PHONY: dev migrate makemigrations test install sync
 
-# Development server
+# Development server (port from .env PORT, default 8090)
 dev:
-	uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8090
+	uv run python -c "import uvicorn; from app.core.config import settings; uvicorn.run('app.main:app', host='0.0.0.0', port=settings.port, reload=True)"
 
 # Run migrations
 migrate:

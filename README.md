@@ -14,7 +14,7 @@ FastAPI · SQLModel · PostgreSQL + pgvector · Alembic · JWT · LangChain · L
 cp .env.example .env     # configure DB + JWT + LLM key
 uv sync
 make migrate
-make dev                 # http://localhost:8090  (/docs)
+make dev                 # http://localhost:8090  (/docs) — port via PORT in .env
 ```
 
 ## The agent
@@ -61,7 +61,7 @@ from langchain.tools import tool
 
 @tool
 def my_tool(query: str) -> str:
-    """Cuándo y cómo debe usarla el modelo (el docstring es el manual)."""
+    """When and how the model should use it (the docstring is the manual)."""
     return "..."
 
 class MyModule:
