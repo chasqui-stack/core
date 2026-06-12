@@ -1,6 +1,6 @@
 # Chasqui Core
 
-FastAPI + LangGraph backend — the heart of [Chasqui](https://github.com/chasqui-stack/chasqui), the open-source stack for building WhatsApp AI agents.
+FastAPI + LangGraph backend — the heart of [Chasqui](https://github.com/chasqui-stack/chasqui), the open-source stack for building custom AI chat agents (WhatsApp first; more channels on the roadmap).
 
 Handles the canonical `/ingest` entry point, the agent orchestrator (LangGraph), conversation memory, FAQ-RAG (pgvector), the pluggable **tool registry**, and admin authentication.
 
