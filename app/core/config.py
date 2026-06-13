@@ -90,6 +90,7 @@ class Settings(BaseSettings):
     # /send with the same INTERNAL_API_KEY. Unset = sends from the admin
     # panel fail with a clear error for that channel.
     channel_whatsapp_send_url: str | None = None
+    channel_telegram_send_url: str | None = None
 
     # Handoff notifications (ADR-004) — both OPTIONAL, both best-effort
     # (failures log, never break the turn). Webhook covers Slack/Zapier/n8n;
