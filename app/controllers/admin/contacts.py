@@ -124,6 +124,7 @@ async def list_contacts(
     offset: int = Query(default=0, ge=0),
     search: str | None = Query(default=None),
     mode: str | None = Query(default=None, pattern="^(agent|human)$"),
+    channel: str | None = Query(default=None),
 ):
     # Outer join: a contact may not have a conversation yet (mode = "agent")
     base = select(Contact, Conversation).join(
@@ -138,6 +139,9 @@ async def list_contacts(
     if mode:
         base = base.where(Conversation.mode == mode)
         count = count.where(Conversation.mode == mode)
+    if channel:
+        base = base.where(Contact.channel == channel)
+        count = count.where(Contact.channel == channel)
 
     total = (await session.exec(count)).one()
     # Attention-first: human-mode conversations on top, then recency
