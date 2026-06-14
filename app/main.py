@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -37,7 +38,32 @@ async def lifespan(app: FastAPI):
             "searches run as exact scans (fine small, slow at scale).",
             settings.embedding_dim,
         )
+
+    # Inbound coalescing (ADR-008): start the deferred-dispatch worker. Replies
+    # go out via the send seam, so warn loudly if no channel send URL is set.
+    worker_stop: asyncio.Event | None = None
+    worker_task: asyncio.Task | None = None
+    if settings.inbound_debounce_seconds > 0:
+        from app.services import channel_send, coalesce_worker
+
+        if not any(
+            channel_send.send_url_for(ch) for ch in ("whatsapp", "telegram")
+        ):
+            logger.warning(
+                "INBOUND_DEBOUNCE_SECONDS=%s but no CHANNEL_<CH>_SEND_URL is set — "
+                "coalesced replies have nowhere to go. Set the send URL for each "
+                "active channel, or set INBOUND_DEBOUNCE_SECONDS=0 for synchronous "
+                "replies.",
+                settings.inbound_debounce_seconds,
+            )
+        worker_stop = asyncio.Event()
+        worker_task = asyncio.create_task(coalesce_worker.run_loop(worker_stop))
+
     yield
+
+    if worker_task is not None:
+        worker_stop.set()
+        await worker_task
     await close_db()
 
 

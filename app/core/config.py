@@ -92,6 +92,18 @@ class Settings(BaseSettings):
     channel_whatsapp_send_url: str | None = None
     channel_telegram_send_url: str | None = None
 
+    # Inbound coalescing (ADR-008). Wait this many seconds of SILENCE after the
+    # last inbound, then run ONE turn over the whole burst (debounce + coalesce)
+    # — coherent reply, 1 turn instead of N. The reply is dispatched via the
+    # channel send seam above (deferred), so CHANNEL_<CH>_SEND_URL must be set
+    # for every active channel. Default 5s: long enough to catch a fragmented
+    # send, short enough to stay responsive. 0 = disabled → legacy synchronous
+    # reply in the /ingest response (no worker, no send-url requirement).
+    inbound_debounce_seconds: int = 5
+
+    # How often the coalesce worker polls for due conversations (ADR-008).
+    inbound_debounce_poll_seconds: float = 1.0
+
     # Handoff notifications (ADR-004) — both OPTIONAL, both best-effort
     # (failures log, never break the turn). Webhook covers Slack/Zapier/n8n;
     # SMTP covers email via any relay (Brevo, Mailgun, SES, Gmail app

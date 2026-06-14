@@ -142,6 +142,27 @@ async def put_media(key: str, data: bytes, content_type: str) -> None:
     )
 
 
+async def get_media(key: str) -> tuple[str, bytes]:
+    """Download one object → (content_type, bytes). Raises on failure.
+
+    Used by the coalesce worker (ADR-008) to re-hydrate persisted inbound media
+    back into a `data:` URI for a deferred turn — the bytes were uploaded at
+    ingest and only the object key is on the message row.
+    """
+    client = _get_client()
+    response = await asyncio.to_thread(
+        client.get_object, Bucket=settings.storage_bucket, Key=key
+    )
+    body = await asyncio.to_thread(response["Body"].read)
+    return response.get("ContentType") or "application/octet-stream", body
+
+
+async def get_media_data_uri(key: str) -> str:
+    """Re-hydrate a stored object as a base64 `data:` URI (mirror of put_data_uri)."""
+    content_type, data = await get_media(key)
+    return f"data:{content_type};base64,{base64.b64encode(data).decode()}"
+
+
 def presigned_get(key: str, expires: int = PRESIGN_EXPIRES_SECONDS) -> str:
     """Short-lived GET URL — local computation, no network round-trip."""
     client = _get_presign_client()

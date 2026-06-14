@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, Index
+from sqlalchemy import Column, Index, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
@@ -18,6 +18,13 @@ class Message(SQLModel, table=True):
     __tablename__ = "messages"
     __table_args__ = (
         Index("ix_messages_conversation_created", "conversation_id", "created_at"),
+        # Per-conversation pending-batch gather (ADR-008) — partial.
+        Index(
+            "ix_messages_pending_inbound",
+            "conversation_id",
+            "created_at",
+            postgresql_where=text("processed_at IS NULL AND direction = 'in'"),
+        ),
     )
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
@@ -41,3 +48,10 @@ class Message(SQLModel, table=True):
     # For inbound messages this is the gateway's `received_at`; for outbound,
     # the moment the core produced the reply. Naive UTC.
     created_at: datetime = Field(default_factory=_utcnow_naive, nullable=False)
+
+    # Inbound coalescing (ADR-008): NULL = pending (not yet folded into a turn).
+    # The coalesce worker gathers pending inbound (processed_at IS NULL,
+    # direction='in') for a conversation, runs ONE turn, then stamps them. Marks
+    # pending state per-row instead of watermarking on created_at (the gateway
+    # clock is not monotonic). Outbound rows leave this NULL (filtered by direction).
+    processed_at: datetime | None = Field(default=None, nullable=True)
