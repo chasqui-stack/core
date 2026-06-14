@@ -145,6 +145,21 @@ Handoffs can notify, both optional and best-effort (`app/services/notify_service
 `smtplib` — any relay works (Brevo, Mailgun, SES, Gmail app password):
 `SMTP_HOST/PORT/USER/PASSWORD/FROM` + `NOTIFY_EMAIL_TO`.
 
+## Inbound coalescing (ADR-008)
+
+People fragment a thought across several quick messages. With
+`INBOUND_DEBOUNCE_SECONDS > 0` (**default 5**), `/ingest` persists each inbound
+and arms a per-conversation silence window instead of replying inline; after the
+burst settles, a Postgres-backed worker (`FOR UPDATE SKIP LOCKED`, multi-replica
+safe, no broker) folds the whole batch into **one** turn and dispatches the reply
+through the outbound seam above (`app/services/coalesce_worker.py`).
+
+So **`CHANNEL_<CH>_SEND_URL` is required per active channel** when debounce > 0 —
+that's where the deferred reply goes (the core warns at startup if it's missing).
+Set `INBOUND_DEBOUNCE_SECONDS=0` to keep the **legacy synchronous** reply in the
+`/ingest` response (no worker). A per-identity advisory lock serializes turns in
+both modes.
+
 ## Media storage (optional, ADR-003)
 
 Inbound images/audio arrive as base64 `data:` URIs (canonical contract). With

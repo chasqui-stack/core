@@ -1,28 +1,52 @@
 """Canonical ingest pipeline (ARCHITECTURE §5, §6).
 
-upsert contact → get-or-create the single conversation → agent turn →
-persist inbound + outbound → canonical response.
+upsert contact → get-or-create the single conversation → reply.
 
-The turn runs BEFORE the inbound row is persisted on purpose: the
-orchestrator's history query must see only *prior* messages (the current
-one travels as the turn's input). Everything shares one transaction, so
-failure semantics are unchanged.
+Two reply modes, gated by INBOUND_DEBOUNCE_SECONDS (ADR-008):
+
+- **Synchronous (= 0):** run the agent turn inline and return the reply in the
+  /ingest response. The turn runs BEFORE the inbound row is persisted on
+  purpose — the orchestrator's history query must see only *prior* messages
+  (the current one travels as the turn's input). One transaction.
+
+- **Deferred / coalesced (> 0, the default):** persist the inbound as *pending*
+  (processed_at NULL), arm the conversation's debounce window, and ack with an
+  empty reply. The coalesce worker (app/services/coalesce_worker.py) later folds
+  the whole burst into ONE turn and dispatches via the channel send seam.
+
+Both paths first take the per-identity advisory lock (Etapa 1) so a rapid burst
+— e.g. a gateway webhook-retry storm — can't race on contact/conversation
+creation.
 """
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import text
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core import storage
+from app.core.config import settings
 from app.models import Contact, Conversation, Message
 from app.schemas.ingest import ContactPayload, IngestRequest, IngestResponse
 from app.services import memory_service, orchestrator
 
 logger = logging.getLogger(__name__)
+
+
+async def acquire_turn_lock(session: AsyncSession, channel: str, external_id: str) -> None:
+    """Serialize concurrent turns for one identity (Etapa 1, core#6).
+
+    Transaction-scoped advisory lock: auto-released on commit/rollback, held
+    only for the txn this session already spans, so it adds no connection beyond
+    today's. Shared by the ingest pipeline and the coalesce worker.
+    """
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+        {"key": f"{channel}:{external_id}"},
+    )
 
 
 def _to_naive_utc(dt: datetime | None) -> datetime:
@@ -145,27 +169,54 @@ async def _persist_inbound(
 
 
 async def handle_ingest(session: AsyncSession, request: IngestRequest) -> IngestResponse:
-    """Run one full canonical turn and return the canonical response."""
-    # Serialize concurrent turns for the same identity (channel+external_id) so
-    # a rapid burst — e.g. a gateway webhook-retry storm — can't race on
-    # contact/conversation creation or persist out of order. Transaction-scoped
-    # advisory lock: auto-released on commit/rollback, held only for the turn
-    # this session already spans, so it adds no connection beyond today's.
-    # Coalescing such bursts into a single turn is the larger follow-up (#6).
-    await session.execute(
-        text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
-        {"key": f"{request.channel}:{request.contact.external_id}"},
-    )
+    """Accept one canonical inbound; reply synchronously or defer to the worker."""
+    await acquire_turn_lock(session, request.channel, request.contact.external_id)
 
     contact = await upsert_contact(session, request.channel, request.contact)
     conversation = await get_or_create_conversation(session, contact.id)
 
+    if settings.inbound_debounce_seconds > 0:
+        return await _schedule_coalesced(session, contact, conversation, request)
+    return await _run_synchronous(session, contact, conversation, request)
+
+
+async def _schedule_coalesced(
+    session: AsyncSession, contact: Contact, conversation: Conversation,
+    request: IngestRequest,
+) -> IngestResponse:
+    """Deferred path (ADR-008): persist as pending, arm the window, ack empty.
+
+    No turn runs here. Human mode (ADR-004) persists the inbound marked
+    processed (a human owns the reply) and arms NOTHING — the coalesce worker
+    never sees human-owned threads.
+    """
+    inbound = await _persist_inbound(session, contact, conversation, request)
+    if conversation.mode == "human":
+        inbound.processed_at = _to_naive_utc(None)  # handled by a human, not pending
+    else:
+        # (Re)arm the silence window — every fresh message pushes it out, so the
+        # turn fires only after the burst settles. Pending (processed_at NULL).
+        conversation.debounce_due_at = _to_naive_utc(None) + timedelta(
+            seconds=settings.inbound_debounce_seconds
+        )
+    conversation.updated_at = _to_naive_utc(None)
+    session.add(conversation)
+    await session.flush()
+    return IngestResponse(messages=[], conversation_id=conversation.id)
+
+
+async def _run_synchronous(
+    session: AsyncSession, contact: Contact, conversation: Conversation,
+    request: IngestRequest,
+) -> IngestResponse:
+    """Synchronous path (INBOUND_DEBOUNCE_SECONDS=0): run the turn inline."""
     # Human mode (ADR-004) — checked FIRST: a human owns this thread, so the
     # inbound is persisted but NO agent turn runs. The empty reply list is
     # silence on every channel (gateways render 0..N messages), which is how
     # channels inherit human mode with zero changes.
     if conversation.mode == "human":
-        await _persist_inbound(session, contact, conversation, request)
+        inbound = await _persist_inbound(session, contact, conversation, request)
+        inbound.processed_at = _to_naive_utc(None)
         conversation.updated_at = _to_naive_utc(None)
         session.add(conversation)
         await session.flush()
@@ -174,7 +225,8 @@ async def handle_ingest(session: AsyncSession, request: IngestRequest) -> Ingest
     # Agent turn (LangGraph — history query must not see the current message yet)
     replies = await orchestrator.run_turn(session, conversation, request.message)
 
-    await _persist_inbound(session, contact, conversation, request)
+    inbound = await _persist_inbound(session, contact, conversation, request)
+    inbound.processed_at = _to_naive_utc(None)  # handled inline, never pending
 
     # Persist outbound message(s)
     for reply in replies:

@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column
+from sqlalchemy import Column, Index, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
@@ -20,6 +20,14 @@ class Conversation(SQLModel, table=True):
     """
 
     __tablename__ = "conversations"
+    __table_args__ = (
+        # The coalesce worker only ever scans armed rows (ADR-008) — partial.
+        Index(
+            "ix_conversations_debounce_due",
+            "debounce_due_at",
+            postgresql_where=text("debounce_due_at IS NOT NULL"),
+        ),
+    )
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
 
@@ -37,6 +45,12 @@ class Conversation(SQLModel, table=True):
         default_factory=dict,
         sa_column=Column("conversation_state", JSONB, nullable=False, server_default="{}"),
     )
+
+    # Inbound coalescing (ADR-008): when the current debounce window elapses.
+    # NULL = nothing pending. The coalesce worker claims rows whose window has
+    # passed (FOR UPDATE SKIP LOCKED) and runs ONE turn over the burst. Only
+    # armed when INBOUND_DEBOUNCE_SECONDS > 0; the synchronous path never sets it.
+    debounce_due_at: datetime | None = Field(default=None, nullable=True)
 
     created_at: datetime = Field(default_factory=_utcnow_naive, nullable=False)
     updated_at: datetime = Field(default_factory=_utcnow_naive, nullable=False)

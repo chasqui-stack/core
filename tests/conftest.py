@@ -46,6 +46,9 @@ def _no_dev_env(monkeypatch):
     """Tests must not depend on the developer's .env — /ingest is open by
     default (the auth suite sets its own key on top), storage/outbound/notify
     are unconfigured (tests that need them monkeypatch their own values)."""
+    # Default to the SYNCHRONOUS path so the existing ingest suite is unchanged;
+    # the coalescing suite (ADR-008) opts in with its own positive value.
+    monkeypatch.setattr(settings, "inbound_debounce_seconds", 0)
     for field in (
         "internal_api_key",
         "storage_endpoint_url",
@@ -118,6 +121,17 @@ async def session(connection):
     """Session for asserting DB state — sees the app's (savepoint) commits."""
     async with _savepoint_session(connection) as session:
         yield session
+
+
+@pytest.fixture
+def session_factory(connection):
+    """A worker-style session factory bound to the test's transaction.
+
+    The coalesce worker (ADR-008) creates its own sessions via a factory; in
+    tests we hand it one that joins the same rolled-back connection so its
+    commits stay inside the test's savepoint isolation.
+    """
+    return lambda: _savepoint_session(connection)
 
 
 @pytest.fixture
