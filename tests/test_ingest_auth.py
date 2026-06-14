@@ -3,7 +3,21 @@
 import pytest
 
 from app.core.config import settings
+from app.schemas.ingest import OutboundMessage
+from app.services import orchestrator
 from tests.test_ingest import canonical_payload
+
+
+@pytest.fixture(autouse=True)
+def _stub_agent_turn(monkeypatch):
+    """These tests gate on the shared secret, not the LLM — keep them hermetic
+    so they need no real model (and no GOOGLE_API_KEY) in CI. Without this the
+    valid-key cases run the real orchestrator and build ChatGoogleGenerativeAI."""
+
+    async def fake_run_turn(session, conversation, inbound, **kwargs):
+        return [OutboundMessage(type="text", text="ok")]
+
+    monkeypatch.setattr(orchestrator, "run_turn", fake_run_turn)
 
 
 @pytest.fixture
