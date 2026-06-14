@@ -13,6 +13,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
+from sqlalchemy import text
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -145,6 +146,17 @@ async def _persist_inbound(
 
 async def handle_ingest(session: AsyncSession, request: IngestRequest) -> IngestResponse:
     """Run one full canonical turn and return the canonical response."""
+    # Serialize concurrent turns for the same identity (channel+external_id) so
+    # a rapid burst — e.g. a gateway webhook-retry storm — can't race on
+    # contact/conversation creation or persist out of order. Transaction-scoped
+    # advisory lock: auto-released on commit/rollback, held only for the turn
+    # this session already spans, so it adds no connection beyond today's.
+    # Coalescing such bursts into a single turn is the larger follow-up (#6).
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+        {"key": f"{request.channel}:{request.contact.external_id}"},
+    )
+
     contact = await upsert_contact(session, request.channel, request.contact)
     conversation = await get_or_create_conversation(session, contact.id)
 

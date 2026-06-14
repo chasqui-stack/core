@@ -78,6 +78,29 @@ async def test_ingest_creates_contact_conversation_and_messages(client, session)
     assert inbound.meta == {"wamid": "wamid.test123"}
 
 
+async def test_ingest_takes_a_per_identity_advisory_lock(client, session):
+    """A turn serializes per (channel, external_id) via a transaction advisory
+    lock (Etapa 1 — kills the burst race; coalescing is #6). Savepoint tests
+    never commit, so the xact lock is still held after the request."""
+    from sqlalchemy import text
+
+    before = (
+        await session.execute(
+            text("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory'")
+        )
+    ).scalar()
+
+    resp = await client.post("/ingest", json=canonical_payload())
+    assert resp.status_code == 200
+
+    after = (
+        await session.execute(
+            text("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory'")
+        )
+    ).scalar()
+    assert after > before
+
+
 async def test_ingest_contact_upsert_is_idempotent(client, session):
     r1 = await client.post("/ingest", json=canonical_payload())
     r2 = await client.post("/ingest", json=canonical_payload())
