@@ -27,7 +27,7 @@ def test_longest_prefix_wins():
 def test_unknown_model_defaults_to_text_only(caplog):
     caps = resolve_capabilities("ollama", "llama3.3")
     assert not caps.vision and not caps.audio
-    assert any("assuming text-only" in r.message for r in caplog.records)
+    assert any("text-only" in r.message for r in caplog.records)
 
 
 def test_env_overrides_beat_registry():
@@ -35,3 +35,14 @@ def test_env_overrides_beat_registry():
         "ollama", "llava", vision_override=True, audio_override=False
     )
     assert caps.vision and not caps.audio
+
+
+def test_partial_override_resolves_caps_and_stays_quiet(caplog):
+    # Unknown model + only vision set (the OpenRouter/Minimax case): vision must
+    # be on, and the "text-only" warning must NOT fire — it's misleading once
+    # an override is configured.
+    caps = resolve_capabilities(
+        "openrouter", "minimax/minimax-m3", vision_override=True
+    )
+    assert caps.vision and not caps.audio
+    assert not any("text-only" in r.message for r in caplog.records)
