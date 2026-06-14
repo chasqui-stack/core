@@ -59,15 +59,20 @@ def resolve_capabilities(
         if key.startswith(prefix) and (matched is None or len(prefix) > matched[0]):
             matched = (len(prefix), caps)
 
-    if matched is None and (vision_override is None or audio_override is None):
-        logger.warning(
-            "Unknown LLM '%s' — assuming text-only. Set LLM_SUPPORTS_VISION / "
-            "LLM_SUPPORTS_AUDIO to override.",
-            key,
-        )
-
     base = matched[1] if matched else ModelCapabilities()
-    return ModelCapabilities(
+    caps = ModelCapabilities(
         vision=vision_override if vision_override is not None else base.vision,
         audio=audio_override if audio_override is not None else base.audio,
     )
+
+    # Only nag when the model is unknown AND nothing was configured. Once any
+    # override is set, the operator has resolved it on purpose — don't cry wolf,
+    # and never claim "text-only" when vision/audio was just enabled.
+    if matched is None and vision_override is None and audio_override is None:
+        logger.warning(
+            "Unknown LLM '%s' — defaulting to text-only (vision=False, audio=False). "
+            "Set LLM_SUPPORTS_VISION / LLM_SUPPORTS_AUDIO to override.",
+            key,
+        )
+
+    return caps
