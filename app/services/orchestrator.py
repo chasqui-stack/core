@@ -30,7 +30,7 @@ from app.core.llm_capabilities import ModelCapabilities, resolve_capabilities
 from app.models import AgentConfig, Conversation, Memory, Message
 from app.modules import registry
 from app.schemas.ingest import InboundMessage, OutboundMessage
-from app.services import agent_config_service, memory_service
+from app.services import agent_config_service, memory_service, transcription
 from app.services.agent_context import TurnContext
 from app.services.agent_middleware import ToolErrorMiddleware, ToolFilterMiddleware
 
@@ -166,6 +166,14 @@ def _current_message(inbound: InboundMessage, caps: ModelCapabilities) -> HumanM
                     {"type": "audio", "base64": b64, "mime_type": mime},
                 ]
             )
+        if inbound.text:
+            # STT transcribed it upstream (ADR-010), or a rare audio caption.
+            # Render it as a voice-message turn — no audio block, the model
+            # can't take one; the transcript IS the content.
+            return HumanMessage(
+                f'The user sent a voice message. Transcript: "{inbound.text}". '
+                "Respond to its content naturally. Do NOT say you transcribed it."
+            )
         logger.warning(
             "Audio received but model '%s:%s' lacks audio input (or no media data) — text fallback",
             settings.llm_provider,
@@ -209,6 +217,31 @@ def _capabilities() -> ModelCapabilities:
     )
 
 
+async def _transcribe_if_needed(
+    inbound: InboundMessage, caps: ModelCapabilities
+) -> InboundMessage:
+    """STT pre-pass (ADR-010): set `inbound.text` from the audio transcript.
+
+    Runs only for an audio message when the LLM lacks native audio and STT is
+    configured; otherwise (and on any STT failure) returns the inbound
+    unchanged, so `_current_message` keeps its graceful text fallback. Never
+    raises — STT must not break a turn.
+    """
+    if inbound.type != "audio" or caps.audio or not transcription.stt_enabled():
+        return inbound
+    if not inbound.media_url or not inbound.media_url.startswith("data:"):
+        return inbound
+    try:
+        mime, audio = storage.parse_data_uri(inbound.media_url)
+    except ValueError:
+        return inbound
+    transcript = await transcription.transcribe(audio, mime)
+    if not transcript:
+        return inbound
+    logger.info("STT transcribed inbound audio (%d chars)", len(transcript))
+    return inbound.model_copy(update={"text": transcript})
+
+
 async def _invoke(
     session: AsyncSession,
     conversation: Conversation,
@@ -246,13 +279,15 @@ async def run_turn(
     `model` overrides the configured LLM (tests inject a scripted fake).
     """
     config = await agent_config_service.get_config(session)
+    caps = _capabilities()
+    inbound = await _transcribe_if_needed(inbound, caps)
     memories = await memory_service.retrieve_relevant(
         session, conversation.contact_id, inbound.text or ""
     )
     messages = [
         _system_message(config, memories),
         *await _history_messages(session, conversation.id, settings.history_limit),
-        _current_message(inbound, _capabilities()),
+        _current_message(inbound, caps),
     ]
     return await _invoke(session, conversation, config, messages, model)
 
@@ -298,9 +333,10 @@ async def run_coalesced_turn(
         session, conversation.contact_id, query
     )
     caps = _capabilities()
-    current = [
-        _current_message(await _message_to_inbound(m), caps) for m in batch
-    ]
+    current = []
+    for m in batch:
+        inbound = await _transcribe_if_needed(await _message_to_inbound(m), caps)
+        current.append(_current_message(inbound, caps))
     messages = [
         _system_message(config, memories),
         *await _history_messages(

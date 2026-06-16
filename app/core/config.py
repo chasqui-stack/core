@@ -59,6 +59,21 @@ class Settings(BaseSettings):
     llm_supports_vision: bool | None = None
     llm_supports_audio: bool | None = None
 
+    # Speech-to-text fallback (ADR-010). Transcribe an inbound voice note to
+    # text BEFORE the turn when the LLM lacks native audio (caps.audio False)
+    # — so any model can answer it. Empty provider = DISABLED → the existing
+    # graceful "ask for text" degradation, unchanged. OpenAI-compatible API;
+    # Groq's whisper-large-v3-turbo is the default (native OGG/Opus → no
+    # transcoding, cheapest). The credential is SEPARATE from the LLM key on
+    # purpose: the whole point is that the LLM provider isn't the audio one.
+    stt_provider: str = ""  # "" disabled | "groq" | "openai" | "<compatible>"
+    stt_base_url: str | None = None  # default derived from provider when empty
+    stt_model: str = "whisper-large-v3-turbo"
+    stt_api_key: str | None = None  # required when enabled; not the LLM key
+    stt_language: str | None = None  # ISO-639-1 hint; empty = auto-detect
+    stt_timeout_seconds: float = 30.0
+    stt_max_bytes: int = 25 * 1024 * 1024  # provider request cap (Groq free tier)
+
     # Embeddings (RAG over pgvector) — provider-swappable via
     # init_embeddings(), like the LLM (see app/core/embeddings.py).
     embedding_provider: str = "google"  # "google" | "openai" | "ollama" | ...
@@ -119,6 +134,11 @@ class Settings(BaseSettings):
     @property
     def smtp_configured(self) -> bool:
         return bool(self.smtp_host and self.smtp_from and self.notify_email_to)
+
+    @property
+    def stt_configured(self) -> bool:
+        """STT is usable only with both a provider and its key set (ADR-010)."""
+        return bool(self.stt_provider and self.stt_api_key)
 
     @property
     def storage_configured(self) -> bool:
