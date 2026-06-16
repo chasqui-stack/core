@@ -267,6 +267,60 @@ async def test_audio_falls_back_to_text_when_model_lacks_audio(session, monkeypa
     assert any("lacks audio" in r.message for r in caplog.records)
 
 
+async def test_audio_transcribed_when_stt_enabled(session, monkeypatch):
+    """STT on + audio-less LLM → the transcript reaches the agent as text (ADR-010)."""
+    from app.core.config import settings
+    from app.services import transcription
+
+    monkeypatch.setattr(settings, "llm_supports_audio", False)
+    monkeypatch.setattr(transcription, "stt_enabled", lambda: True)
+
+    async def fake_transcribe(audio, mime):
+        assert mime == "audio/ogg"  # OGG handed through as-is
+        return "Hola, ¿cuál es el horario de atención?"
+
+    monkeypatch.setattr(transcription, "transcribe", fake_transcribe)
+
+    conversation = await make_conversation(session)
+    model = scripted(AIMessage("Atendemos de 9 a 6."))
+    inbound = InboundMessage(type="audio", media_url=f"data:audio/ogg;base64,{PNG_B64}")
+
+    replies = await orchestrator.run_turn(session, conversation, inbound, model=model)
+
+    current = model.received[0][-1]
+    assert isinstance(current.content, str)  # rendered as text, no audio block
+    assert "horario de atención" in current.content  # the transcript is the content
+    assert replies[0].text == "Atendemos de 9 a 6."
+
+
+async def test_native_audio_llm_never_transcribes(session, monkeypatch):
+    """caps.audio True (Gemini) → STT is skipped, audio block sent natively."""
+    from app.core.config import settings
+    from app.services import transcription
+
+    monkeypatch.setattr(settings, "llm_supports_audio", True)
+    monkeypatch.setattr(transcription, "stt_enabled", lambda: True)
+
+    calls: list = []
+
+    async def spy_transcribe(audio, mime):
+        calls.append(mime)
+        return "should not be used"
+
+    monkeypatch.setattr(transcription, "transcribe", spy_transcribe)
+
+    conversation = await make_conversation(session)
+    model = scripted(AIMessage("Escuché tu nota."))
+    inbound = InboundMessage(type="audio", media_url=f"data:audio/ogg;base64,{PNG_B64}")
+
+    await orchestrator.run_turn(session, conversation, inbound, model=model)
+
+    assert calls == []  # native audio path: transcribe never called
+    blocks = model.received[0][-1].content
+    assert isinstance(blocks, list)
+    assert any(b["type"] == "audio" for b in blocks)  # audio block sent natively
+
+
 # ---------------------------------------------------------------------------
 # Memory write path (save_memory tool, embeddings stubbed)
 # ---------------------------------------------------------------------------

@@ -39,6 +39,19 @@ async def lifespan(app: FastAPI):
             settings.embedding_dim,
         )
 
+    # STT fallback (ADR-010): a provider set without a usable key/base_url means
+    # voice notes silently keep the text fallback — warn so it isn't a surprise.
+    if settings.stt_provider:
+        from app.services import transcription
+
+        if not transcription.stt_enabled():
+            logger.warning(
+                "STT_PROVIDER=%s but STT is not usable (missing STT_API_KEY or an "
+                "unresolved base URL) — voice notes will keep the text fallback. "
+                "Set STT_API_KEY (and STT_BASE_URL for a non-default provider).",
+                settings.stt_provider,
+            )
+
     # Inbound coalescing (ADR-008): start the deferred-dispatch worker. Replies
     # go out via the send seam, so warn loudly if no channel send URL is set.
     worker_stop: asyncio.Event | None = None

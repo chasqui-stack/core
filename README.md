@@ -38,6 +38,11 @@ Per-model vision/audio support is auto-detected (`app/core/llm_capabilities.py`)
 unknown models degrade to text-only with a warning (override with
 `LLM_SUPPORTS_VISION` / `LLM_SUPPORTS_AUDIO`).
 
+**Voice notes on an audio-less LLM** (ADR-010): set `STT_PROVIDER` (default Groq
+`whisper-large-v3-turbo` — native OGG/Opus, cheapest) + a separate `STT_API_KEY`
+and inbound audio is transcribed to text before the turn. Unset = the agent asks
+the user to type it. Native-audio models (Gemini) ignore STT and hear directly.
+
 **Embeddings are swappable too** (`app/core/embeddings.py`, via
 `init_embeddings()`): `EMBEDDING_PROVIDER` google/openai/ollama. The vector
 width is **`EMBEDDING_DIM` (default 768) — provision-time config**: it's
