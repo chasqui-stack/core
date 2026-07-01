@@ -106,6 +106,7 @@ class Settings(BaseSettings):
     # panel fail with a clear error for that channel.
     channel_whatsapp_send_url: str | None = None
     channel_telegram_send_url: str | None = None
+    channel_web_send_url: str | None = None
 
     # Inbound coalescing (ADR-008). Wait this many seconds of SILENCE after the
     # last inbound, then run ONE turn over the whole burst (debounce + coalesce)
