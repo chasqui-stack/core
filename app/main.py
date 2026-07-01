@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, Depends, FastAPI
 
-from app.controllers import base, ingest
+from app.controllers import base, conversations, ingest
 from app.controllers.admin import (
     auth_router,
     config_router,
@@ -60,7 +60,7 @@ async def lifespan(app: FastAPI):
         from app.services import channel_send, coalesce_worker
 
         if not any(
-            channel_send.send_url_for(ch) for ch in ("whatsapp", "telegram")
+            channel_send.send_url_for(ch) for ch in ("whatsapp", "telegram", "web")
         ):
             logger.warning(
                 "INBOUND_DEBOUNCE_SECONDS=%s but no CHANNEL_<CH>_SEND_URL is set — "
@@ -95,6 +95,10 @@ app.include_router(base.router)
 
 # Canonical entry point — the only seam gateways talk to (§5)
 app.include_router(ingest.router, tags=["ingest"])
+
+# Internal conversation read (ADR-011) — gateway-facing, INTERNAL_API_KEY.
+# Generic, channel-scoped; lets a gateway rehydrate a thread without admin JWT.
+app.include_router(conversations.router, tags=["internal"])
 
 # Admin authentication (admins only — end users never authenticate)
 app.include_router(auth_router, prefix="/admin/auth", tags=["admin-auth"])
