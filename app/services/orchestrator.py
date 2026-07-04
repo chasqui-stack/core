@@ -83,10 +83,17 @@ def _attachments_line(caps: ModelCapabilities) -> str | None:
         what = "hear attached voice notes"
     else:
         return None
+    # The last sentence overrides conversation-history poisoning: once the
+    # agent has claimed "I can't see images" a few times (e.g. while media
+    # was misconfigured), consistency bias makes it keep refusing media it
+    # now receives (1/4 acknowledged vs 4/4 with the override, live A/B
+    # against a real poisoned thread).
     return (
         "Attachments: users may attach media to their messages. You receive "
         f"it natively and CAN {what} — use their content directly and never "
-        "claim you cannot."
+        "claim you cannot. If earlier replies in this conversation claimed "
+        "you could not see or hear attachments, that limitation no longer "
+        "applies."
     )
 
 
