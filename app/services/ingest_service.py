@@ -58,6 +58,23 @@ def _to_naive_utc(dt: datetime | None) -> datetime:
     return dt
 
 
+async def find_contact(
+    session: AsyncSession, channel: str, external_id: str
+) -> Contact | None:
+    """Read-only lookup by (channel, external_id) — no create.
+
+    The mirror of `upsert_contact`'s find step, for gateway-facing reads (the
+    internal history endpoint, ADR-011) that must not create a contact.
+    """
+    result = await session.exec(
+        select(Contact).where(
+            Contact.channel == channel,
+            Contact.external_id == external_id,
+        )
+    )
+    return result.first()
+
+
 async def upsert_contact(
     session: AsyncSession, channel: str, payload: ContactPayload
 ) -> Contact:

@@ -57,3 +57,18 @@ def get_chat_model(
 
     init_kwargs.update(kwargs)
     return init_chat_model(model, **init_kwargs)
+
+
+def get_media_chat_model(**kwargs) -> BaseChatModel:
+    """The chat model for turns whose current message carries image/audio blocks.
+
+    Same as get_chat_model(), except Gemini's dynamic thinking is disabled:
+    with tools bound, gemini-2.5's reasoning frequently talks itself into
+    "I'm a text chat assistant" and refuses to look at attached media
+    (0/8 acknowledged the image in a live A/B; 8/8 with thinking off).
+    Text-only turns keep full thinking for tool routing; other providers
+    are untouched.
+    """
+    if settings.llm_provider == "google":
+        kwargs.setdefault("thinking_budget", 0)
+    return get_chat_model(**kwargs)

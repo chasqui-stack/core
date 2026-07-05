@@ -67,8 +67,43 @@ def _get_agent():
 # ---------------------------------------------------------------------------
 
 
-def _system_message(config: AgentConfig, memories: list[Memory]) -> SystemMessage:
+def _attachments_line(caps: ModelCapabilities) -> str | None:
+    """One system line asserting the model's real media senses.
+
+    Persona prompts ("you serve customers over chat") make gemini-2.5 deny
+    seeing attached media unless told otherwise — part of the fix measured
+    in the live A/B (see get_media_chat_model). Capability-aware so a
+    text-only model is never promised senses it lacks.
+    """
+    if caps.vision and caps.audio:
+        what = "see attached images and hear attached voice notes"
+    elif caps.vision:
+        what = "see attached images"
+    elif caps.audio:
+        what = "hear attached voice notes"
+    else:
+        return None
+    # The last sentence overrides conversation-history poisoning: once the
+    # agent has claimed "I can't see images" a few times (e.g. while media
+    # was misconfigured), consistency bias makes it keep refusing media it
+    # now receives (1/4 acknowledged vs 4/4 with the override, live A/B
+    # against a real poisoned thread).
+    return (
+        "Attachments: users may attach media to their messages. You receive "
+        f"it natively and CAN {what} — use their content directly and never "
+        "claim you cannot. If earlier replies in this conversation claimed "
+        "you could not see or hear attachments, that limitation no longer "
+        "applies."
+    )
+
+
+def _system_message(
+    config: AgentConfig, memories: list[Memory], caps: ModelCapabilities
+) -> SystemMessage:
     parts = [config.system_prompt]
+    attachments = _attachments_line(caps)
+    if attachments:
+        parts.append(attachments)
     if memories:
         facts = "\n".join(f"- {m.content}" for m in memories)
         parts.append(
@@ -100,9 +135,7 @@ async def _history_messages(
         query = query.where(
             ~((Message.direction == "in") & (Message.processed_at.is_(None)))
         )
-    result = await session.exec(
-        query.order_by(Message.created_at.desc()).limit(limit)
-    )
+    result = await session.exec(query.order_by(Message.created_at.desc()).limit(limit))
     rows = list(result.all())[::-1]
 
     history: list[HumanMessage | AIMessage] = []
@@ -135,10 +168,17 @@ def _current_message(inbound: InboundMessage, caps: ModelCapabilities) -> HumanM
                 if inbound.text
                 else "The user sent an image. "
             )
+            # Media block FIRST, text after — Google's documented order for
+            # single-media prompts. With tools bound, gemini-2.5 refused to
+            # "see" images almost every time in the text-first order (0/6 vs
+            # 6/6 in an A/B against the live API).
             return HumanMessage(
                 content=[
-                    {"type": "text", "text": caption + "Look at it and respond naturally."},
                     {"type": "image", "base64": b64, "mime_type": mime},
+                    {
+                        "type": "text",
+                        "text": caption + "Look at it and respond naturally.",
+                    },
                 ]
             )
         logger.warning(
@@ -154,8 +194,10 @@ def _current_message(inbound: InboundMessage, caps: ModelCapabilities) -> HumanM
     if inbound.type == "audio":
         if caps.audio and media:
             mime, b64 = media
+            # Same media-first ordering as the image branch (see above).
             return HumanMessage(
                 content=[
+                    {"type": "audio", "base64": b64, "mime_type": mime},
                     {
                         "type": "text",
                         "text": (
@@ -163,7 +205,6 @@ def _current_message(inbound: InboundMessage, caps: ModelCapabilities) -> HumanM
                             "to its content naturally. Do NOT say you transcribed it."
                         ),
                     },
-                    {"type": "audio", "base64": b64, "mime_type": mime},
                 ]
             )
         if inbound.text:
@@ -188,6 +229,14 @@ def _current_message(inbound: InboundMessage, caps: ModelCapabilities) -> HumanM
     return HumanMessage(inbound.text or f"[{inbound.type}]")
 
 
+def _has_media_blocks(message: HumanMessage) -> bool:
+    """True when the turn's current message carries an image/audio block."""
+    return isinstance(message.content, list) and any(
+        isinstance(b, dict) and b.get("type") in ("image", "audio")
+        for b in message.content
+    )
+
+
 def _extract_text(message) -> str:
     """Final answer text (Gemini may return content as block lists)."""
     text = getattr(message, "text", None)
@@ -198,7 +247,9 @@ def _extract_text(message) -> str:
         return content
     if isinstance(content, list):
         return " ".join(
-            b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"
+            b.get("text", "")
+            for b in content
+            if isinstance(b, dict) and b.get("type") == "text"
         ).strip()
     return str(content)
 
@@ -284,11 +335,16 @@ async def run_turn(
     memories = await memory_service.retrieve_relevant(
         session, conversation.contact_id, inbound.text or ""
     )
+    current = _current_message(inbound, caps)
     messages = [
-        _system_message(config, memories),
+        _system_message(config, memories, caps),
         *await _history_messages(session, conversation.id, settings.history_limit),
-        _current_message(inbound, caps),
+        current,
     ]
+    if model is None and _has_media_blocks(current):
+        from app.core import llm
+
+        model = llm.get_media_chat_model()
     return await _invoke(session, conversation, config, messages, model)
 
 
@@ -310,7 +366,10 @@ async def _message_to_inbound(message: Message) -> InboundMessage:
                 message.media_url,
             )
     return InboundMessage(
-        type=message.type, text=message.text, media_url=media_url, raw=message.meta or {}
+        type=message.type,
+        text=message.text,
+        media_url=media_url,
+        raw=message.meta or {},
     )
 
 
@@ -338,10 +397,14 @@ async def run_coalesced_turn(
         inbound = await _transcribe_if_needed(await _message_to_inbound(m), caps)
         current.append(_current_message(inbound, caps))
     messages = [
-        _system_message(config, memories),
+        _system_message(config, memories, caps),
         *await _history_messages(
             session, conversation.id, settings.history_limit, exclude_pending=True
         ),
         *current,
     ]
+    if model is None and any(_has_media_blocks(c) for c in current):
+        from app.core import llm
+
+        model = llm.get_media_chat_model()
     return await _invoke(session, conversation, config, messages, model)
