@@ -27,6 +27,11 @@ dependencies = [
     "pgvector>=0.3.0",
     # Media storage — S3-compatible client (ADR-003)
     "boto3>=1.35.0",
+    # Document-RAG — text extraction + chunking (knowledge module)
+    "pypdf>=6.19.0",
+    "python-docx>=1.2.0",
+    "beautifulsoup4>=4.15.0",
+    "langchain-text-splitters>=1.1.2",
 ]
 
 # Dev group: installed by a plain `uv sync` (so a freshly generated project
