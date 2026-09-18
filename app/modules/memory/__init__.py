@@ -2,7 +2,9 @@
 
 Extraction-by-tool: instead of a second LLM pass after every turn, the
 model calls these tools silently (proven pattern). Retrieval happens before
-the turn in `memory_service.retrieve_relevant` (pgvector).
+the turn via this module's `system_prompt_fragment` hook (ADR-012), which
+queries `memory_service.retrieve_relevant` (pgvector) and publishes the
+facts block — the core no longer hardcodes it.
 
 Sprint 4 (carry-over): memory is no longer append-only —
 - `save_memory` dedups on save: a near-identical existing memory is updated
@@ -144,12 +146,27 @@ async def forget_memory(content_hint: str, runtime: ToolRuntime[TurnContext]) ->
 
 
 class MemoryModule:
-    """Long-term memory writing/correcting (retrieval is wired in the orchestrator)."""
+    """Long-term memory: tools write/correct facts, the fragment publishes them."""
 
     name = "memory"
 
     def register_tools(self):
         return [save_memory, update_memory, forget_memory]
+
+    async def system_prompt_fragment(self, context, query: str) -> str | None:
+        """Retrieved facts about this contact, relevant to the current turn."""
+        memories = await memory_service.retrieve_relevant(
+            context.session, context.contact_id, query
+        )
+        if not memories:
+            return None
+        facts = "\n".join(f"- {m.content}" for m in memories)
+        return (
+            "Facts you remember about the user (long-term memory):\n"
+            f"{facts}\n"
+            "If the user corrects or contradicts any of these facts, "
+            "silently update it with `update_memory`."
+        )
 
 
 module = MemoryModule()

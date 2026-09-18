@@ -12,6 +12,8 @@ import logging
 from langchain.tools import ToolRuntime, tool
 from pydantic import BaseModel, Field
 
+from app.models import AgentConfig
+from app.services import agent_config_service
 from app.services.agent_context import TurnContext
 
 from app.modules.faq.models import FaqEntry  # noqa: F401 — lands the table in metadata
@@ -30,10 +32,23 @@ class FaqSearchConfig(BaseModel):
         le=1.0,
         description="Minimum cosine similarity for a result to count as relevant",
     )
+    inject_question_index: bool = Field(
+        default=False,
+        description=(
+            "Publish the FAQ question index in the system prompt every turn "
+            "so the model knows what it can look up (costs tokens per turn)"
+        ),
+    )
+    question_index_max: int = Field(
+        default=40,
+        ge=1,
+        le=200,
+        description="Skip the index entirely when the FAQ has more entries than this",
+    )
 
 
-def _tool_config(ctx: TurnContext) -> FaqSearchConfig:
-    raw = (ctx.config.tool_config or {}).get("faq_search", {})
+def _tool_config(config: AgentConfig) -> FaqSearchConfig:
+    raw = (config.tool_config or {}).get("faq_search", {})
     try:
         return FaqSearchConfig(**raw)
     except Exception:  # bad admin-entered config must not break the turn
@@ -49,18 +64,19 @@ NO_RESULTS = (
 
 @tool
 async def faq_search(query: str, runtime: ToolRuntime[TurnContext]) -> str:
-    """Search the company's knowledge base (frequently asked questions).
+    """Search the operator's knowledge base about this specific business or project.
 
-    ALWAYS use this tool when the user asks about business-specific
-    information: products, services, prices, schedules, policies,
-    locations, etc. Answer ONLY with what the tool returns.
+    Call this for ANY question about this business, product or project —
+    its features, concepts, terminology, prices, schedules, policies or
+    how-tos. You do NOT know these details from training; never answer
+    them from memory. Answer ONLY with what the tool returns.
 
     Args:
         query: Key concepts of what the user needs to know
             (e.g. "opening hours", "return policy").
     """
     ctx = runtime.context
-    config = _tool_config(ctx)
+    config = _tool_config(ctx.config)
 
     hits = await service.search(
         ctx.session,
@@ -81,6 +97,10 @@ async def faq_search(query: str, runtime: ToolRuntime[TurnContext]) -> str:
     )
 
 
+# Over-cap warning fires once, not per turn (reset if the count drops back).
+_index_cap_warned = False
+
+
 class FaqModule:
     """FAQ knowledge-base: Q&A entries + grounded retrieval."""
 
@@ -89,6 +109,48 @@ class FaqModule:
 
     def register_tools(self):
         return [faq_search]
+
+    async def system_prompt_fragment(self, context, query: str) -> str | None:
+        """The FAQ question index — a table of contents of what's look-up-able.
+
+        Opt-in (`inject_question_index`, ADR-012): it costs tokens on every
+        turn. Framing is load-bearing — the list must read as "call the tool
+        for these", never "you already know these" (that wording is the bug
+        chasqui#30 opens with). Questions only, never answers.
+        """
+        global _index_cap_warned
+        config = _tool_config(context.config)
+        if not config.inject_question_index:
+            return None
+        if not agent_config_service.tool_enabled(context.config, "faq_search"):
+            return None  # advertising a disabled tool would misroute the model
+
+        questions = await service.list_questions(context.session)
+        if not questions:
+            return None
+        if len(questions) > config.question_index_max:
+            # A silently truncated list is worse than none — the model would
+            # treat it as exhaustive and refuse what's not on it.
+            if not _index_cap_warned:
+                logger.warning(
+                    "FAQ question index skipped: %d entries exceed "
+                    "question_index_max=%d — raise the cap or disable "
+                    "inject_question_index",
+                    len(questions),
+                    config.question_index_max,
+                )
+                _index_cap_warned = True
+            return None
+        _index_cap_warned = False
+
+        lines = "\n".join(f"- {q}" for q in questions)
+        return (
+            "The knowledge base can answer the questions listed below. When "
+            "the user asks about any of them — or anything similar — call "
+            "`faq_search` to retrieve the answer. These are things you can "
+            "LOOK UP, not things you know: never answer them from memory.\n"
+            f"{lines}"
+        )
 
     def register_models(self):
         return [FaqEntry]

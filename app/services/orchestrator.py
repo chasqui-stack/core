@@ -3,7 +3,9 @@
 LangChain v1 `create_agent` gives us the router → ToolNode → respond loop;
 Chasqui supplies the pieces around it:
 
-- system prompt: DB-editable (agent_config) + retrieved long-term memories
+- system prompt: DB-editable (agent_config) + module fragments (ADR-012:
+  each module may contribute a block per turn — memory publishes retrieved
+  facts, faq can publish its question index)
 - history: the conversation's persisted messages (text-only window)
 - current message: multimodal content blocks (image/audio) when the
   configured model supports them (app/core/llm_capabilities.py), graceful
@@ -27,10 +29,10 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.core import storage
 from app.core.config import settings
 from app.core.llm_capabilities import ModelCapabilities, resolve_capabilities
-from app.models import AgentConfig, Conversation, Memory, Message
+from app.models import AgentConfig, Conversation, Message
 from app.modules import registry
 from app.schemas.ingest import InboundMessage, OutboundMessage
-from app.services import agent_config_service, memory_service, transcription
+from app.services import agent_config_service, transcription
 from app.services.agent_context import TurnContext
 from app.services.agent_middleware import ToolErrorMiddleware, ToolFilterMiddleware
 
@@ -98,20 +100,14 @@ def _attachments_line(caps: ModelCapabilities) -> str | None:
 
 
 def _system_message(
-    config: AgentConfig, memories: list[Memory], caps: ModelCapabilities
+    config: AgentConfig, fragments: list[str], caps: ModelCapabilities
 ) -> SystemMessage:
+    """Base prompt + capability line + module fragments (ADR-012) + date."""
     parts = [config.system_prompt]
     attachments = _attachments_line(caps)
     if attachments:
         parts.append(attachments)
-    if memories:
-        facts = "\n".join(f"- {m.content}" for m in memories)
-        parts.append(
-            "Facts you remember about the user (long-term memory):\n"
-            f"{facts}\n"
-            "If the user corrects or contradicts any of these facts, "
-            "silently update it with `update_memory`."
-        )
+    parts.extend(fragments)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     parts.append(f"Fecha y hora actual: {now}")
     return SystemMessage("\n\n".join(parts))
@@ -294,25 +290,17 @@ async def _transcribe_if_needed(
 
 
 async def _invoke(
-    session: AsyncSession,
-    conversation: Conversation,
-    config: AgentConfig,
+    context: TurnContext,
     messages: list,
     model: BaseChatModel | None,
 ) -> list[OutboundMessage]:
     """Run the assembled message list through the agent → canonical reply."""
     agent = _build_agent(model) if model is not None else _get_agent()
-    context = TurnContext(
-        session=session,
-        contact_id=conversation.contact_id,
-        conversation_id=conversation.id,
-        config=config,
-    )
     try:
         result = await agent.ainvoke({"messages": messages}, context=context)
         reply = _extract_text(result["messages"][-1]).strip()
     except Exception:
-        logger.exception("Agent turn failed for conversation %s", conversation.id)
+        logger.exception("Agent turn failed for conversation %s", context.conversation_id)
         reply = settings.fallback_reply
 
     return [OutboundMessage(type="text", text=reply or settings.fallback_reply)]
@@ -332,12 +320,16 @@ async def run_turn(
     config = await agent_config_service.get_config(session)
     caps = _capabilities()
     inbound = await _transcribe_if_needed(inbound, caps)
-    memories = await memory_service.retrieve_relevant(
-        session, conversation.contact_id, inbound.text or ""
+    context = TurnContext(
+        session=session,
+        contact_id=conversation.contact_id,
+        conversation_id=conversation.id,
+        config=config,
     )
+    fragments = await registry.get_prompt_fragments(context, inbound.text or "")
     current = _current_message(inbound, caps)
     messages = [
-        _system_message(config, memories, caps),
+        _system_message(config, fragments, caps),
         *await _history_messages(session, conversation.id, settings.history_limit),
         current,
     ]
@@ -345,7 +337,7 @@ async def run_turn(
         from app.core import llm
 
         model = llm.get_media_chat_model()
-    return await _invoke(session, conversation, config, messages, model)
+    return await _invoke(context, messages, model)
 
 
 async def _message_to_inbound(message: Message) -> InboundMessage:
@@ -384,20 +376,25 @@ async def run_coalesced_turn(
 
     `batch` is the ordered list of pending inbound rows. They are fed as the
     turn's current input (one Human message each, in order) and excluded from
-    history. Memory retrieval is keyed on their concatenated text.
+    history. Prompt fragments (e.g. memory retrieval) are keyed on their
+    concatenated text.
     """
     config = await agent_config_service.get_config(session)
     query = "\n".join(m.text for m in batch if m.text)
-    memories = await memory_service.retrieve_relevant(
-        session, conversation.contact_id, query
+    context = TurnContext(
+        session=session,
+        contact_id=conversation.contact_id,
+        conversation_id=conversation.id,
+        config=config,
     )
+    fragments = await registry.get_prompt_fragments(context, query)
     caps = _capabilities()
     current = []
     for m in batch:
         inbound = await _transcribe_if_needed(await _message_to_inbound(m), caps)
         current.append(_current_message(inbound, caps))
     messages = [
-        _system_message(config, memories, caps),
+        _system_message(config, fragments, caps),
         *await _history_messages(
             session, conversation.id, settings.history_limit, exclude_pending=True
         ),
@@ -407,4 +404,4 @@ async def run_coalesced_turn(
         from app.core import llm
 
         model = llm.get_media_chat_model()
-    return await _invoke(session, conversation, config, messages, model)
+    return await _invoke(context, messages, model)

@@ -134,7 +134,11 @@ async def test_reembed_all_is_one_batched_call(session, fake_embeddings):
 # ---------------------------------------------------------------------------
 
 
-async def make_runtime(session, tool_config: dict | None = None) -> SimpleNamespace:
+async def make_runtime(
+    session,
+    tool_config: dict | None = None,
+    enabled_tools: dict | None = None,
+) -> SimpleNamespace:
     contact = Contact(channel="whatsapp", external_id="bsuid-FAQ-TEST")
     session.add(contact)
     await session.flush()
@@ -145,7 +149,9 @@ async def make_runtime(session, tool_config: dict | None = None) -> SimpleNamesp
         session=session,
         contact_id=contact.id,
         conversation_id=conversation.id,
-        config=AgentConfig(tool_config=tool_config or {}),
+        config=AgentConfig(
+            tool_config=tool_config or {}, enabled_tools=enabled_tools or {}
+        ),
     )
     return SimpleNamespace(context=ctx)
 
@@ -180,6 +186,94 @@ async def test_faq_search_respects_admin_tool_config(session, fake_embeddings):
 
     assert "Mon-Fri 9:00-18:00." in result
     assert "[2]" not in result  # top_k honored
+
+
+# ---------------------------------------------------------------------------
+# Question-index prompt fragment (chasqui#30 / ADR-012)
+# ---------------------------------------------------------------------------
+
+INDEX_ON = {"faq_search": {"inject_question_index": True}}
+
+
+@pytest.fixture(autouse=True)
+def reset_index_cap_warning(monkeypatch):
+    """The warn-once flag is process-global — isolate it per test."""
+    import app.modules.faq as faq_pkg
+
+    monkeypatch.setattr(faq_pkg, "_index_cap_warned", False)
+
+
+async def test_question_index_is_off_by_default(session, fake_embeddings):
+    from app.modules.faq import module
+
+    await make_entries(session)
+    runtime = await make_runtime(session)
+
+    assert await module.system_prompt_fragment(runtime.context, "hola") is None
+
+
+async def test_question_index_lists_questions_never_answers(session, fake_embeddings):
+    from app.modules.faq import module
+
+    await make_entries(session)
+    runtime = await make_runtime(session, tool_config=INDEX_ON)
+
+    fragment = await module.system_prompt_fragment(runtime.context, "hola")
+
+    assert fragment is not None
+    assert "- What are your opening hours?" in fragment
+    assert "- What is the return policy?" in fragment
+    # Questions only — leaking answers would let the model skip the tool
+    assert "Mon-Fri 9:00-18:00." not in fragment
+    assert "30 days with receipt." not in fragment
+    # Framing is load-bearing: look-up-able, never "things you know"
+    assert "`faq_search`" in fragment
+    assert "never answer them from memory" in fragment
+    assert "not things you know" in fragment
+
+
+async def test_question_index_skipped_over_cap_with_one_warning(
+    session, fake_embeddings, caplog
+):
+    import logging
+
+    from app.modules.faq import module
+
+    await make_entries(session)  # 2 entries > cap of 1
+    runtime = await make_runtime(
+        session,
+        tool_config={
+            "faq_search": {"inject_question_index": True, "question_index_max": 1}
+        },
+    )
+
+    with caplog.at_level(logging.WARNING, logger="app.modules.faq"):
+        first = await module.system_prompt_fragment(runtime.context, "hola")
+        second = await module.system_prompt_fragment(runtime.context, "hola")
+
+    assert first is None and second is None  # nothing truncated, nothing injected
+    warnings = [r for r in caplog.records if "question_index_max" in r.message]
+    assert len(warnings) == 1  # once, not per turn
+
+
+async def test_question_index_silent_when_faq_is_empty(session, fake_embeddings):
+    from app.modules.faq import module
+
+    runtime = await make_runtime(session, tool_config=INDEX_ON)
+
+    assert await module.system_prompt_fragment(runtime.context, "hola") is None
+
+
+async def test_question_index_respects_disabled_tool(session, fake_embeddings):
+    from app.modules.faq import module
+
+    await make_entries(session)
+    runtime = await make_runtime(
+        session, tool_config=INDEX_ON, enabled_tools={"faq_search": False}
+    )
+
+    # Advertising a tool the model can't call would misroute it
+    assert await module.system_prompt_fragment(runtime.context, "hola") is None
 
 
 # ---------------------------------------------------------------------------
