@@ -13,7 +13,7 @@ from sqlmodel import select
 
 from app.core.config import settings
 from app.models import AgentConfig, Contact, Conversation
-from app.modules.faq import NO_RESULTS, faq_search
+from app.modules.faq import NO_RESULTS, NO_RESULTS_TRY_DOCUMENTS, faq_search
 from app.modules.faq import service as faq_service
 from app.modules.faq.models import FaqEntry
 from app.services.admin_service import create_admin_access_token
@@ -164,6 +164,7 @@ async def test_faq_search_tool_returns_grounded_snippets(session, fake_embedding
 
     assert "Mon-Fri 9:00-18:00." in result
     assert "ONLY" in result  # grounding instruction
+    assert "search_documents" in result  # near-miss hits hand over too
 
 
 async def test_faq_search_tool_is_honest_on_miss(session, fake_embeddings):
@@ -172,7 +173,22 @@ async def test_faq_search_tool_is_honest_on_miss(session, fake_embeddings):
 
     result = await faq_search.coroutine(query="unrelated topic", runtime=runtime)
 
+    # the documents retriever is on (default) → hand over before giving up
+    assert result == NO_RESULTS_TRY_DOCUMENTS
+    assert "search_documents" in result and "do NOT make up an answer" in result
+
+
+async def test_faq_search_miss_is_final_without_the_documents_tool(
+    session, fake_embeddings
+):
+    await make_entries(session)
+    runtime = await make_runtime(session, enabled_tools={"search_documents": False})
+
+    result = await faq_search.coroutine(query="unrelated topic", runtime=runtime)
     assert result == NO_RESULTS
+
+    hit = await faq_search.coroutine(query="opening hours", runtime=runtime)
+    assert "search_documents" not in hit  # never point at a tool that is off
 
 
 async def test_faq_search_respects_admin_tool_config(session, fake_embeddings):

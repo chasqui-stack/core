@@ -1,4 +1,4 @@
-"""Sprint 15.1 acceptance: knowledge module — extract, chunk, embed, admin routes.
+"""Sprint 15 acceptance: knowledge module — extract, chunk, embed, admin routes, agent tool.
 
 Embeddings are faked with deterministic vectors so pgvector computes REAL
 cosine distances (the test DB has the extension). Fixture files are built
@@ -6,13 +6,17 @@ in memory — no binary blobs in the repo, no network.
 """
 
 import io
+import logging
 import uuid
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 from sqlmodel import select
 
 from app.core.config import settings
+from app.models import AgentConfig, Contact, Conversation
+from app.modules.knowledge import NO_RESULTS, NO_RESULTS_TRY_FAQ, search_documents
 from app.modules.knowledge import service as knowledge_service
 from app.modules.knowledge.extract import (
     EmptyText,
@@ -22,6 +26,7 @@ from app.modules.knowledge.extract import (
 )
 from app.modules.knowledge.models import Document, DocumentChunk
 from app.services.admin_service import create_admin_access_token
+from app.services.agent_context import TurnContext
 
 BASE = "/admin/modules/knowledge"
 
@@ -471,3 +476,295 @@ async def test_reprocess_conflicts(client, session, admin_headers):
         f"{BASE}/documents/{uuid.uuid4()}/reprocess", headers=admin_headers
     )
     assert missing.status_code == 404
+
+
+# --- agent tool --------------------------------------------------------------
+
+REFUNDS = b"Refund policy: 30 days with receipt."
+HOURS = b"Opening hours: Mon-Fri 9-18."
+
+
+async def index(session, session_factory, filename: str, data: bytes) -> Document:
+    document = await upload(session, filename, data)
+    await knowledge_service.process_document(document.id, data, session_factory)
+    return document
+
+
+async def make_runtime(
+    session,
+    tool_config: dict | None = None,
+    enabled_tools: dict | None = None,
+) -> SimpleNamespace:
+    contact = Contact(channel="whatsapp", external_id="bsuid-KNOWLEDGE-TEST")
+    session.add(contact)
+    await session.flush()
+    conversation = Conversation(contact_id=contact.id)
+    session.add(conversation)
+    await session.flush()
+    ctx = TurnContext(
+        session=session,
+        contact_id=contact.id,
+        conversation_id=conversation.id,
+        config=AgentConfig(
+            tool_config=tool_config or {}, enabled_tools=enabled_tools or {}
+        ),
+    )
+    return SimpleNamespace(context=ctx)
+
+
+async def test_search_documents_returns_ranked_filename_prefixed_passages(
+    session, session_factory, fake_embeddings
+):
+    await index(session, session_factory, "hours.txt", HOURS)
+    await index(session, session_factory, "refunds.txt", REFUNDS)
+    # The default 0.35 floor would drop the orthogonal hours chunk
+    runtime = await make_runtime(
+        session, tool_config={"document_search": {"min_similarity": 0.0}}
+    )
+
+    result = await search_documents.coroutine(query="refund", runtime=runtime)
+
+    assert "ONLY" in result  # grounding instruction
+    assert "[refunds.txt] Refund policy: 30 days with receipt." in result
+    assert result.index("[refunds.txt]") < result.index("[hours.txt]")  # best first
+
+
+async def test_search_documents_is_honest_below_the_floor(
+    session, session_factory, fake_embeddings
+):
+    await index(session, session_factory, "hours.txt", HOURS)
+    runtime = await make_runtime(session)
+
+    # orthogonal to the only chunk → similarity 0 < default min_similarity
+    result = await search_documents.coroutine(query="refund", runtime=runtime)
+
+    assert result == NO_RESULTS_TRY_FAQ
+    assert "do NOT make up an answer" in result
+
+
+async def test_search_documents_is_honest_on_embeddings_outage(
+    session, session_factory, fake_embeddings
+):
+    await index(session, session_factory, "refunds.txt", REFUNDS)
+    runtime = await make_runtime(session)
+    fake_embeddings.fail = True
+
+    result = await search_documents.coroutine(query="refund", runtime=runtime)
+
+    assert result == NO_RESULTS_TRY_FAQ  # a miss, never a stack trace
+
+
+async def test_search_documents_respects_admin_tool_config(
+    session, session_factory, fake_embeddings
+):
+    await index(session, session_factory, "refunds.txt", REFUNDS)
+    await index(session, session_factory, "hours.txt", HOURS)
+    runtime = await make_runtime(
+        session, tool_config={"document_search": {"top_k": 1, "min_similarity": 0.0}}
+    )
+
+    result = await search_documents.coroutine(query="refund", runtime=runtime)
+
+    assert "[refunds.txt]" in result
+    assert "[hours.txt]" not in result  # top_k honored
+
+
+async def test_search_documents_survives_invalid_tool_config(
+    session, session_factory, fake_embeddings, caplog
+):
+    await index(session, session_factory, "refunds.txt", REFUNDS)
+    runtime = await make_runtime(
+        session, tool_config={"document_search": {"top_k": "many"}}
+    )
+
+    with caplog.at_level(logging.WARNING, logger="app.modules.knowledge"):
+        result = await search_documents.coroutine(query="refund", runtime=runtime)
+
+    assert "[refunds.txt]" in result  # fell back to the defaults
+    assert "Invalid document_search tool_config" in caplog.text
+
+
+async def test_search_documents_returns_whole_chunks(
+    session, session_factory, fake_embeddings
+):
+    """A truncated passage loses the answer whenever it sits past the cut."""
+    document = await index(session, session_factory, "manual.txt", LONG_TEXT.encode())
+    first = (
+        await session.exec(
+            select(DocumentChunk).where(
+                DocumentChunk.document_id == document.id, DocumentChunk.seq == 0
+            )
+        )
+    ).one()
+    runtime = await make_runtime(
+        session, tool_config={"document_search": {"top_k": 20, "min_similarity": 0.0}}
+    )
+
+    result = await search_documents.coroutine(query="anything", runtime=runtime)
+
+    assert len(first.content) > 600
+    assert f"[manual.txt] {first.content.strip()}" in result
+
+
+async def test_a_miss_hands_over_to_faq_only_while_it_is_enabled(
+    session, session_factory, fake_embeddings
+):
+    await index(session, session_factory, "hours.txt", HOURS)
+
+    runtime = await make_runtime(session)
+    handed = await search_documents.coroutine(query="refund", runtime=runtime)
+    assert handed == NO_RESULTS_TRY_FAQ and "faq_search" in handed
+    # hits can be near-misses → they carry the same pointer
+    assert "faq_search" in await search_documents.coroutine(query="hours", runtime=runtime)
+
+    runtime.context.config.enabled_tools = {"faq_search": False}
+    alone = await search_documents.coroutine(query="refund", runtime=runtime)
+    assert alone == NO_RESULTS
+    assert "faq_search" not in await search_documents.coroutine(query="hours", runtime=runtime)
+
+
+# --- document-index prompt fragment (ADR-012) --------------------------------
+
+INDEX_ON = {"document_search": {"inject_document_index": True}}
+
+
+@pytest.fixture(autouse=True)
+def reset_index_cap_warning(monkeypatch):
+    """The warn-once flag is process-global — isolate it per test."""
+    import app.modules.knowledge as knowledge_mod
+
+    monkeypatch.setattr(knowledge_mod, "_index_cap_warned", False)
+
+
+async def test_document_index_is_off_by_default(
+    session, session_factory, fake_embeddings
+):
+    from app.modules.knowledge import module
+
+    await index(session, session_factory, "refunds.txt", REFUNDS)
+    runtime = await make_runtime(session)
+
+    assert await module.system_prompt_fragment(runtime.context, "hola") is None
+
+
+async def test_document_index_lists_ready_filenames_never_content(
+    session, session_factory, fake_embeddings
+):
+    from app.modules.knowledge import module
+
+    await index(session, session_factory, "refunds.txt", REFUNDS)
+    session.add(
+        Document(
+            filename="scan.pdf",
+            mime_type="application/pdf",
+            size_bytes=3,
+            content_sha256="scan",
+            status="error",
+        )
+    )
+    await session.commit()
+    runtime = await make_runtime(session, tool_config=INDEX_ON)
+
+    fragment = await module.system_prompt_fragment(runtime.context, "hola")
+
+    assert "- refunds.txt" in fragment
+    assert "search_documents" in fragment
+    assert "scan.pdf" not in fragment  # not searchable → not advertised
+    assert "30 days" not in fragment  # filenames only
+
+
+async def test_document_index_skipped_over_cap_with_one_warning(
+    session, session_factory, fake_embeddings, caplog
+):
+    from app.modules.knowledge import module
+
+    await index(session, session_factory, "refunds.txt", REFUNDS)
+    await index(session, session_factory, "hours.txt", HOURS)
+    runtime = await make_runtime(
+        session,
+        tool_config={
+            "document_search": {"inject_document_index": True, "document_index_max": 1}
+        },
+    )
+
+    with caplog.at_level(logging.WARNING, logger="app.modules.knowledge"):
+        first = await module.system_prompt_fragment(runtime.context, "hola")
+        second = await module.system_prompt_fragment(runtime.context, "hola")
+
+    assert first is None and second is None
+    assert caplog.text.count("Document index skipped") == 1
+
+
+async def test_document_index_silent_without_documents_or_with_tool_disabled(
+    session, session_factory, fake_embeddings
+):
+    from app.modules.knowledge import module
+
+    empty = await make_runtime(session, tool_config=INDEX_ON)
+    assert await module.system_prompt_fragment(empty.context, "hola") is None
+
+    await index(session, session_factory, "refunds.txt", REFUNDS)
+    assert await module.system_prompt_fragment(empty.context, "hola") is not None
+
+    empty.context.config.enabled_tools = {"search_documents": False}
+    assert await module.system_prompt_fragment(empty.context, "hola") is None
+
+
+# --- module contract ---------------------------------------------------------
+
+
+def test_module_contract():
+    from app.modules.knowledge import module
+
+    assert [t.name for t in module.register_tools()] == ["search_documents"]
+    assert module.register_models() == [Document, DocumentChunk]
+    assert module.config_key == "document_search"
+    schema = module.config_schema().model_json_schema()
+    # FLAT schema — the admin's SchemaForm renders str/int/float/bool only
+    assert {p["type"] for p in schema["properties"].values()} <= {
+        "integer",
+        "number",
+        "boolean",
+        "string",
+    }
+
+
+def test_retriever_docstrings_carry_the_boundary():
+    """Descriptions are the router: each tool names what the OTHER one is for."""
+    from app.modules.faq import faq_search
+
+    assert "faq_search" in search_documents.description
+    assert "search_documents" in faq_search.description
+
+
+async def test_admin_config_validates_document_search_knobs(client, admin_headers):
+    bad = await client.put(
+        "/admin/config",
+        headers=admin_headers,
+        json={"tool_config": {"document_search": {"top_k": 0}}},
+    )
+    assert bad.status_code == 422
+    assert "document_search" in bad.json()["detail"]
+
+    good = await client.put(
+        "/admin/config",
+        headers=admin_headers,
+        json={"tool_config": {"document_search": {"min_similarity": 0.2}}},
+    )
+    assert good.status_code == 200
+
+
+async def test_tools_listing_exposes_the_tool_and_its_knobs(client, admin_headers):
+    response = await client.get("/admin/tools", headers=admin_headers)
+
+    modules = {m["name"]: m for m in response.json()["modules"]}
+    knowledge = modules["knowledge"]
+    assert knowledge["config_key"] == "document_search"
+    assert [t["name"] for t in knowledge["tools"]] == ["search_documents"]
+    assert all(t["enabled"] for t in knowledge["tools"])  # missing key = enabled
+    assert set(knowledge["config_schema"]["properties"]) == {
+        "top_k",
+        "min_similarity",
+        "inject_document_index",
+        "document_index_max",
+    }

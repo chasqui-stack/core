@@ -67,6 +67,11 @@ def get_tools() -> list[Any]:
     return tools
 
 
+def has_tool(name: str) -> bool:
+    """True when some registered module ships a tool with this name."""
+    return any(tool.name == name for tool in get_tools())
+
+
 def get_models() -> list[type]:
     """Flattened list of every module's SQLModel tables.
 

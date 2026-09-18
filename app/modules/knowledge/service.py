@@ -183,6 +183,16 @@ async def mark_for_reprocess(session: AsyncSession, document: Document) -> None:
     await session.flush()
 
 
+async def list_ready_filenames(session: AsyncSession) -> list[str]:
+    """Filenames of searchable documents, oldest first (prompt document index)."""
+    result = await session.exec(
+        select(Document.filename)
+        .where(Document.status == STATUS_READY)
+        .order_by(Document.created_at)
+    )
+    return list(result.all())
+
+
 async def search(
     session: AsyncSession,
     query: str,

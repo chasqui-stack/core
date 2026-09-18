@@ -13,6 +13,7 @@ from langchain.tools import ToolRuntime, tool
 from pydantic import BaseModel, Field
 
 from app.models import AgentConfig
+from app.modules import registry
 from app.services import agent_config_service
 from app.services.agent_context import TurnContext
 
@@ -61,15 +62,42 @@ NO_RESULTS = (
     "Honestly tell the user you don't have that information — do NOT make up an answer."
 )
 
+# A miss here is not the end of the road when the documents retriever is on:
+# the model otherwise reads NO_RESULTS as "stop" and never tries the sibling.
+NO_RESULTS_TRY_DOCUMENTS = (
+    "No matching FAQ entry was found. The answer may be inside the uploaded "
+    "documents: if you have not already, call search_documents with the same "
+    "query before replying. Only if that also finds nothing, honestly tell the "
+    "user you don't have that information — do NOT make up an answer."
+)
+
+
+# Hits can be near-misses (similar wording, different topic) — same handover.
+HITS_TRY_SIBLING = (
+    "\n\nIf none of this answers the question and you have not already, call "
+    "search_documents with the same query before replying — it searches the uploaded documents."
+)
+
+
+def _sibling_on(config: AgentConfig) -> bool:
+    sibling = "search_documents"
+    return registry.has_tool(sibling) and agent_config_service.tool_enabled(
+        config, sibling
+    )
+
 
 @tool
 async def faq_search(query: str, runtime: ToolRuntime[TurnContext]) -> str:
-    """Search the operator's knowledge base about this specific business or project.
+    """Search the operator-curated FAQ of this specific business or project.
 
-    Call this for ANY question about this business, product or project —
-    its features, concepts, terminology, prices, schedules, policies or
-    how-tos. You do NOT know these details from training; never answer
-    them from memory. Answer ONLY with what the tool returns.
+    Short official answers. Call this for general questions about the business — schedules,
+    location, contact, payments, shipping, policies, concepts, terminology
+    and other common questions. You do NOT know these details from
+    training; never answer them from memory. Answer ONLY with what the
+    tool returns. For details that live inside uploaded documents (product
+    specs, price lists, manuals, step-by-step procedures, contracts), use
+    search_documents instead; when unsure which one holds the answer, call
+    both.
 
     Args:
         query: Key concepts of what the user needs to know
@@ -85,7 +113,7 @@ async def faq_search(query: str, runtime: ToolRuntime[TurnContext]) -> str:
         min_similarity=config.min_similarity,
     )
     if not hits:
-        return NO_RESULTS
+        return NO_RESULTS_TRY_DOCUMENTS if _sibling_on(ctx.config) else NO_RESULTS
 
     snippets = "\n\n".join(
         f"[{i}] Q: {entry.question}\nA: {entry.answer}"
@@ -94,7 +122,7 @@ async def faq_search(query: str, runtime: ToolRuntime[TurnContext]) -> str:
     return (
         "Knowledge base information (base your answer ONLY on this):\n\n"
         f"{snippets}"
-    )
+    ) + (HITS_TRY_SIBLING if _sibling_on(ctx.config) else "")
 
 
 # Over-cap warning fires once, not per turn (reset if the count drops back).
