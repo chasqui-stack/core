@@ -36,6 +36,8 @@ class DocumentResponse(BaseModel):
     status: str
     error_detail: str | None
     chunk_count: int
+    # False when extraction itself failed (e.g. a scanned PDF): no stored text
+    can_reprocess: bool
     created_at: datetime
     updated_at: datetime
 
@@ -57,6 +59,7 @@ def _to_response(document: Document) -> DocumentResponse:
         status=document.status,
         error_detail=document.error_detail,
         chunk_count=document.chunk_count,
+        can_reprocess=bool(document.content_text),
         created_at=document.created_at,
         updated_at=document.updated_at,
     )
