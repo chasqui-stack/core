@@ -131,10 +131,20 @@ async def test_tools_lists_registry_with_schema_and_config(client, admin_headers
     assert all(t["enabled"] for t in faq["tools"])  # missing key = enabled
     # JSON Schema feeds the admin auto-form
     props = faq["config_schema"]["properties"]
-    assert set(props) == {"top_k", "min_similarity"}
+    assert set(props) == {
+        "top_k",
+        "min_similarity",
+        "inject_question_index",
+        "question_index_max",
+    }
     assert props["top_k"]["minimum"] == 1
     # Effective config = schema defaults when nothing is stored
-    assert faq["config"] == {"top_k": 4, "min_similarity": 0.5}
+    assert faq["config"] == {
+        "top_k": 4,
+        "min_similarity": 0.5,
+        "inject_question_index": False,
+        "question_index_max": 40,
+    }
 
     # Modules without knobs expose null schema/config
     assert modules["memory"]["config_schema"] is None
@@ -156,4 +166,9 @@ async def test_tools_reflects_stored_state(client, admin_headers):
 
     assert faq["tools"][0]["enabled"] is False
     # Stored values merged over schema defaults
-    assert faq["config"] == {"top_k": 7, "min_similarity": 0.5}
+    assert faq["config"] == {
+        "top_k": 7,
+        "min_similarity": 0.5,
+        "inject_question_index": False,
+        "question_index_max": 40,
+    }

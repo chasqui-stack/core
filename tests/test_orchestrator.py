@@ -462,3 +462,97 @@ async def test_save_memory_tool_persists_a_memory(session, monkeypatch):
     assert len(memories) == 1
     assert memories[0].content == "Prefiere atención por las tardes"
     assert memories[0].contact_id == conversation.contact_id
+
+
+# ---------------------------------------------------------------------------
+# Module system-prompt fragments (ADR-012)
+# ---------------------------------------------------------------------------
+
+
+def _remove_module(name: str) -> None:
+    registry._MODULES[:] = [m for m in registry._MODULES if m.name != name]
+
+
+async def test_module_fragment_lands_in_the_system_prompt(session):
+    class FragModule:
+        name = "frag-test"
+
+        def register_tools(self):
+            return []
+
+        async def system_prompt_fragment(self, context, query):
+            return f"FRAGMENT seen query: {query}"
+
+    registry.register_module(FragModule())
+    try:
+        conversation = await make_conversation(session)
+        model = scripted(AIMessage("ok"))
+        await orchestrator.run_turn(
+            session,
+            conversation,
+            InboundMessage(type="text", text="hola frag"),
+            model=model,
+        )
+    finally:
+        _remove_module("frag-test")
+
+    system = model.received[0][0]
+    assert isinstance(system, SystemMessage)
+    # The hook received the inbound text and its return was appended
+    assert "FRAGMENT seen query: hola frag" in system.content
+    # Modules WITHOUT the hook (faq default-off, handoff) didn't break anything
+    assert model.offered_tools[0]  # turn ran with the full registry loaded
+
+
+async def test_broken_fragment_is_isolated_and_turn_survives(session):
+    class BrokenFragModule:
+        name = "broken-frag"
+
+        def register_tools(self):
+            return []
+
+        async def system_prompt_fragment(self, context, query):
+            raise RuntimeError("fragment kaput")
+
+    registry.register_module(BrokenFragModule())
+    try:
+        conversation = await make_conversation(session)
+        model = scripted(AIMessage("sigo vivo"))
+        replies = await orchestrator.run_turn(
+            session,
+            conversation,
+            InboundMessage(type="text", text="hola"),
+            model=model,
+        )
+    finally:
+        _remove_module("broken-frag")
+
+    assert replies[0].text == "sigo vivo"  # the turn never saw the crash
+
+
+async def test_fragment_returning_none_is_omitted(session):
+    class SilentFragModule:
+        name = "silent-frag"
+
+        def register_tools(self):
+            return []
+
+        async def system_prompt_fragment(self, context, query):
+            return None
+
+    registry.register_module(SilentFragModule())
+    try:
+        conversation = await make_conversation(session)
+        model = scripted(AIMessage("ok"))
+        await orchestrator.run_turn(
+            session,
+            conversation,
+            InboundMessage(type="text", text="hola"),
+            model=model,
+        )
+    finally:
+        _remove_module("silent-frag")
+
+    system = model.received[0][0]
+    assert "silent-frag" not in system.content
+    assert "None" not in system.content.split("Fecha")[0]  # no stray empty parts

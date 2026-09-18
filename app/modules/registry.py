@@ -39,6 +39,11 @@ class ToolModule(Protocol):
     # config_key: str = <name>   # key inside agent_config.tool_config (faq uses "faq_search").
     #                            # Keep config_schema() FLAT (str/int/float/bool fields only) —
     #                            # that's what the admin SchemaForm renders.
+    # async def system_prompt_fragment(self, context, query) -> str | None: ...
+    #     # One block appended to the system prompt each turn (ADR-012).
+    #     # `context` is the turn's TurnContext (session, contact_id,
+    #     # conversation_id, config); `query` is the inbound text. Return None
+    #     # to stay silent. English only, like every LLM-facing string.
 
 
 _MODULES: list[ToolModule] = []
@@ -76,6 +81,31 @@ def get_models() -> list[type]:
         if register is not None:
             models.extend(register())
     return models
+
+
+async def get_prompt_fragments(context: Any, query: str) -> list[str]:
+    """Collect each module's optional system-prompt contribution (ADR-012).
+
+    A module opts in with `async def system_prompt_fragment(context, query)`;
+    `None`/empty means it has nothing to say this turn. Failures are isolated:
+    a broken fragment is logged and skipped — it never breaks the turn.
+    """
+    discover()  # idempotent — fragments may be collected before the agent is built
+    fragments: list[str] = []
+    for module in _MODULES:
+        hook = getattr(module, "system_prompt_fragment", None)
+        if hook is None:
+            continue
+        try:
+            fragment = await hook(context, query)
+        except Exception:
+            logger.exception(
+                "system_prompt_fragment failed for module '%s' — skipped", module.name
+            )
+            continue
+        if fragment:
+            fragments.append(fragment)
+    return fragments
 
 
 def mount_admin_routes(router: Any) -> None:

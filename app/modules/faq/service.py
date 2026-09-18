@@ -104,6 +104,14 @@ async def search(
     return [(entry, 1.0 - dist) for entry, dist in result.all()]
 
 
+async def list_questions(session: AsyncSession) -> list[str]:
+    """Every entry's question (oldest first) — feeds the prompt index (ADR-012)."""
+    result = await session.exec(
+        select(FaqEntry.question).order_by(FaqEntry.created_at)
+    )
+    return list(result.all())
+
+
 async def reembed_all(session: AsyncSession) -> int:
     """Re-embed every entry (one batched call). Returns how many were updated.
 
