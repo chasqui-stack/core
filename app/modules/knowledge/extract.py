@@ -68,11 +68,18 @@ def _extract_pdf(data: bytes) -> str:
 def _extract_docx(data: bytes) -> str:
     from docx import Document as DocxDocument
 
+    from docx.table import Table
+
     doc = DocxDocument(io.BytesIO(data))
-    parts = [p.text.strip() for p in doc.paragraphs]
-    for table in doc.tables:  # price lists and catalogs live in tables
-        for row in table.rows:
-            parts.append(" | ".join(cell.text.strip() for cell in row.cells))
+    parts: list[str] = []
+    # Document order matters: a table must stay under the heading that
+    # explains it, or its chunk loses that context.
+    for block in doc.iter_inner_content():
+        if isinstance(block, Table):  # price lists and catalogs live in tables
+            for row in block.rows:
+                parts.append(" | ".join(cell.text.strip() for cell in row.cells))
+        else:
+            parts.append(block.text.strip())
     return "\n".join(p for p in parts if p)
 
 

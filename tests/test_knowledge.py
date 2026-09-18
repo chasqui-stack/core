@@ -148,6 +148,23 @@ def test_extracts_every_supported_type():
     assert extract_text("README.md", b"\xef\xbb\xbf# Title\nBody") == "# Title\nBody"
 
 
+def test_docx_keeps_tables_in_document_order():
+    from docx import Document as DocxDocument
+
+    doc = DocxDocument()
+    doc.add_paragraph("Prices")
+    table = doc.add_table(rows=1, cols=2)
+    table.rows[0].cells[0].text, table.rows[0].cells[1].text = "Basic", "10 USD"
+    doc.add_paragraph("Returns policy")
+    out = io.BytesIO()
+    doc.save(out)
+
+    # The table stays under its heading — not appended after the last paragraph
+    assert extract_text("prices.docx", out.getvalue()) == (
+        "Prices\nBasic | 10 USD\nReturns policy"
+    )
+
+
 def test_scanned_pdf_and_blank_files_have_no_text():
     with pytest.raises(EmptyText, match="no extractable text"):
         extract_text("scan.pdf", make_pdf(None))
@@ -408,6 +425,7 @@ async def test_upload_survives_embeddings_outage_and_reprocess_recovers(
     (doc,) = (await client.get(f"{BASE}/documents", headers=admin_headers)).json()
     assert doc["status"] == "error"
     assert "embeddings provider down" in doc["error_detail"]
+    assert doc["can_reprocess"] is True  # the text was extracted and kept
 
     fake_embeddings.fail = False
     again = await client.post(
@@ -438,6 +456,10 @@ async def test_reprocess_conflicts(client, session, admin_headers):
     session.add(busy)
     session.add(textless)
     await session.commit()
+
+    listed = (await client.get(f"{BASE}/documents", headers=admin_headers)).json()
+    flags = {d["filename"]: d["can_reprocess"] for d in listed}
+    assert flags == {"busy.txt": True, "scan.pdf": False}
 
     for document in (busy, textless):
         response = await client.post(
