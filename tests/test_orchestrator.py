@@ -169,7 +169,7 @@ async def test_tool_call_round_trips_through_the_graph(session):
     assert replies[0].text == "Atendemos de 9 a 6."
     # Second model call saw the ToolMessage with the stub's output
     tool_msgs = [m for m in model.received[1] if isinstance(m, ToolMessage)]
-    assert tool_msgs and "knowledge base" in tool_msgs[0].content
+    assert tool_msgs and "No matching FAQ entry" in tool_msgs[0].content
 
 
 async def test_disabled_tool_is_not_offered_to_the_model(session):

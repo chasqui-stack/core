@@ -100,7 +100,14 @@ handoff (flips the conversation to human mode + optional webhook/email
 notification) and lead capture into a module-owned `leads` table with
 operator-configurable required/extra fields; **`memory`** (silent fact
 saving with dedup-on-save, plus `update_memory`/`forget_memory`
-corrections).
+corrections); **`knowledge`** — Document-RAG: upload pdf/docx/txt/md/html
+at `/admin/modules/knowledge/*`, background extract → chunk → embed with
+per-document status, and the `search_documents` tool (whole passages
+prefixed with their filename; knobs under `tool_config["document_search"]`,
+opt-in document index in the prompt). `faq_search` and `search_documents`
+coexist by design: their docstrings name each other's territory and every
+result — hit or miss — points at the sibling while it is enabled, so a
+wrong first pick still ends in a grounded answer.
 Full walkthrough: parent repo `docs/design/module-example-commercial-locations.md`.
 
 ## Admin panel API
