@@ -199,6 +199,17 @@ Isolation follows the SQLAlchemy-recommended transactional-rollback pattern: eac
 
 To point tests at another Postgres (e.g. CI), export `POSTGRES_HOST` / `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` — real env vars take priority over `.env`.
 
+### Routing eval (real LLM)
+
+`pytest` never calls the LLM. Whether the agent picks the right retriever — `faq_search` vs `search_documents` (ADR-013) — is measured separately, against your real `LLM_MODEL` and embeddings:
+
+```bash
+make eval-routing runs=5                                   # totals out of 25 per side
+uv run python scripts/eval_routing.py --model gemini-3.8-flash
+```
+
+It seeds its own **`<postgres_db>_eval`** database from `scripts/eval_data/` (5 FAQs + a product manual + a price list, disjoint on purpose) and asks 11 questions, each in a fresh conversation: 5 FAQ-only, 5 docs-only and 1 that neither store answers. For each answerable one it prints **F** (first tool call was the right one), **U** (the right tool was used at some point — the sibling handover) and **G** (the reply contains the seeded fact). Grounding is a regex check, so read the replies behind any miss. LangSmith tracing is off unless you pass `--trace`. Re-run it whenever you touch either tool's docstring or return string, or switch models.
+
 ## Architecture
 
 This service speaks only the **canonical message contract** — it never knows about WhatsApp. See the parent's [`docs/ARCHITECTURE.md`](https://github.com/chasqui-stack/chasqui/blob/main/docs/ARCHITECTURE.md) (§5 contract, §6 domain model, §8 tool registry, §10 BSUID).
